@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FocusFlow configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profiles", "active_profile"],
+  "properties": {
+    "active_profile": {
+      "type": "string",
+      "description": "Name of the currently active profile"
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Named study profiles; keys are profile names",
+      "additionalProperties": {
+        "$ref": "#/definitions/profile"
+      }
+    },
+    "heatmap": {
+      "$ref": "#/definitions/heatmap"
+    },
+    "experience_mode": {
+      "type": "string",
+      "enum": ["beginner", "basic", "intermediate", "advanced", "expert"],
+      "description": "Which Settings-dialog tier is active (controls which tabs/fields are shown)"
+    },
+    "wizard_completed": {
+      "type": "boolean",
+      "description": "Whether the first-run Experience wizard has been shown/dismissed"
+    }
+  },
+  "definitions": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "study_minutes":               { "type": "number",  "minimum": 1, "maximum": 120 },
+            "break_minutes":               { "type": "number",  "minimum": 1, "maximum": 60  },
+            "long_break_minutes":          { "type": "number",  "minimum": 1, "maximum": 120 },
+            "sessions_before_long_break":  { "type": "integer", "minimum": 1, "maximum": 20  },
+            "auto_resume_after_editor":    { "type": "boolean" }
+          }
+        },
+        "end_conditions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cards_enabled":    { "type": "boolean" },
+            "cards_target":     { "type": "integer", "minimum": 1 },
+            "sessions_enabled": { "type": "boolean" },
+            "sessions_target":  { "type": "integer", "minimum": 1 },
+            "max_time_enabled": { "type": "boolean" },
+            "max_time_minutes": { "type": "number",  "minimum": 1 },
+            "all_due_enabled":  { "type": "boolean" }
+          }
+        },
+        "fatigue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sensitivity":       { "type": "integer", "minimum": 1, "maximum": 20 },
+            "soft_break_prompt": { "type": "boolean" },
+            "show_daily_report": { "type": "boolean" },
+            "adaptive_duration": { "type": "boolean" },
+            "indicator":         { "type": "string",  "enum": ["dot", "percentage"] },
+            "min_cards": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 30,
+              "description": "Minimum answered cards before fatigue scoring begins"
+            },
+            "break_score": {
+              "type": "number",
+              "minimum": 0.20,
+              "maximum": 0.60,
+              "description": "Score threshold (0.0-1.0) below which a break suggestion is shown"
+            },
+            "signals": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Enable or disable individual fatigue signals",
+              "properties": {
+                "rt":    { "type": "boolean", "description": "Answer-time mean drift" },
+                "iiv":   { "type": "boolean", "description": "Answer-time variability drift" },
+                "again": { "type": "boolean", "description": "Weighted again-rate drift" },
+                "lapse": { "type": "boolean", "description": "Individual lapse detection" }
+              }
+            }
+          }
+        },
+        "toolbar": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "collapsed":               { "type": "boolean" },
+            "remember_position":       { "type": "boolean" },
+            "position": {
+              "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2
+            },
+            "auto_collapse_on_start":  { "type": "boolean" },
+            "display_state":           { "type": "integer", "minimum": 0, "maximum": 3 },
+            "goal_display":            { "type": "string", "enum": ["bar", "count", "done_remaining"] },
+            "hud_visibility":          { "type": "string", "enum": ["always", "hover", "hidden"] },
+            "show_play_pause_button":  { "type": "boolean" },
+            "show_skip_button":        { "type": "boolean" },
+            "show_profile_button":     { "type": "boolean" },
+            "show_mode_label":         { "type": "boolean" }
+          }
+        },
+        "sound": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "volume":  { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "custom_path": { "type": "string" }
+          }
+        },
+        "measurement": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "quality_source": { "type": "string", "enum": ["focus", "answers", "retention"] },
+            "ans_weights": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "again": { "type": "number" },
+                "hard":  { "type": "number" },
+                "good":  { "type": "number" },
+                "easy":  { "type": "number" }
+              }
+            },
+            "eff_time_cap_secs": { "type": "integer", "minimum": 0, "maximum": 600 },
+            "ignore_easy_time":  { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "heatmap": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "cell_size":    { "type": "integer", "minimum": 6,  "maximum": 24 },
+        "heavy_cards":  { "type": "integer", "minimum": 1 },
+        "light_cards":  { "type": "integer", "minimum": 1 },
+        "due_forecast_days": { "type": "integer", "minimum": 1, "maximum": 365 },
+        "due_forecast_unlimited": { "type": "boolean" },
+        "color_scheme": {
+          "type": "string",
+          "enum": ["forest", "ember", "ocean", "mono", "violet", "rose"]
+        },
+        "grouping":   { "type": "string", "enum": ["monthly", "weekly", "year"] },
+        "color_mode": { "type": "string", "enum": ["reviews", "quality", "time"] }
+      }
+    }
+  }
+}

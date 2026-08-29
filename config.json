@@ -1,0 +1,153 @@
+{
+    "profiles": {
+        "Default": {
+            "timer": {
+                "study_minutes": 25,
+                "break_minutes": 5,
+                "long_break_minutes": 15,
+                "sessions_before_long_break": 4,
+                "auto_resume_after_editor": true
+            },
+            "end_conditions": {
+                "cards_enabled": false,
+                "cards_target": 25,
+                "sessions_enabled": false,
+                "sessions_target": 4,
+                "max_time_enabled": false,
+                "max_time_minutes": 25,
+                "all_due_enabled": true
+            },
+            "fatigue": {
+                "sensitivity": 10,
+                "soft_break_prompt": false,
+                "show_daily_report": true,
+                "adaptive_duration": false,
+                "indicator": "dot",
+                "min_cards": 10,
+                "break_score": 0.35,
+                "signals": {
+                    "rt": true,
+                    "iiv": true,
+                    "again": true,
+                    "lapse": true
+                }
+            },
+            "toolbar": {
+                "collapsed": false,
+                "remember_position": true,
+                "position": [
+                    80,
+                    80
+                ],
+                "auto_collapse_on_start": false,
+                "display_state": 1,
+                "goal_display": "count",
+                "hud_visibility": "always",
+                "show_play_pause_button": false,
+                "show_skip_button": false,
+                "show_profile_button": false,
+                "show_mode_label": false
+            },
+            "sound": {
+                "enabled": true,
+                "volume": 0.55,
+                "custom_path": ""
+            },
+            "measurement": {
+                "quality_source": "focus",
+                "ans_weights": {
+                    "again": -2,
+                    "hard": -1,
+                    "good": 1,
+                    "easy": 2
+                },
+                "eff_time_cap_secs": 90,
+                "ignore_easy_time": true
+            }
+        }
+    },
+    "active_profile": "Default",
+    "heatmap": {
+        "cell_size": 12,
+        "cell_shape": "soft",
+        "theme": "system",
+        "heatmap_full_history": false,
+        "due_forecast_days": 30,
+        "due_forecast_unlimited": true,
+        "note_marker_shape": "triangle",
+        "note_marker_position": "top_left",
+        "label_color": "",
+        "heavy_cards": 100,
+        "light_cards": 50,
+        "color_scheme": "forest",
+        "custom_scheme_color": "#5284C8",
+        "layout_block_order": [
+            "heatmap",
+            "progress",
+            "cards",
+            "streak"
+        ],
+        "grouping": "monthly",
+        "color_mode": "time",
+        "default_stats_view": "today",
+        "last_selected_date": "",
+        "day_notes": {},
+        "dismissed_reminders": {
+            "date": "",
+            "events": []
+        },
+        "hide_native_stats_line": false,
+        "display": {
+            "show_streak_lines": false,
+            "show_goal_dot": false,
+            "show_legend": false,
+            "show_week_nums": true,
+            "show_eff_time": false,
+            "show_quality": false,
+            "show_new_cards": false,
+            "show_reviews": false,
+            "show_cards_reviewed": false,
+            "show_rev_time": false,
+            "show_streak_info": false,
+            "show_best_streak": false,
+            "show_current_streak": false,
+            "show_due_today": false,
+            "show_attention": false,
+            "show_total_reviews": false,
+            "show_trend": true,
+            "show_month_names": true,
+            "year_visibility": "always",
+            "stats_popup": true,
+            "popup_auto_close_secs": 15,
+            "colored_numbers": false,
+            "metric_label_color": "",
+            "streak_text_color": "",
+            "comfortable_spacing": true,
+            "card_depth": true,
+            "modern_typography": true,
+            "show_progress_bar": false,
+            "number_colors": {
+                "eff": "#5AA9FF",
+                "quality": "#FFA94D",
+                "new": "#4DD9E8",
+                "cards": "#B48CFF",
+                "revtime": "#5FD97A",
+                "cards_reviewed": "#F08FB0"
+            },
+            "streak_line_color": "",
+            "streak_line_thickness": "normal",
+            "future_cell_color": "",
+            "note_marker_color": "",
+            "card_font_family": "",
+            "card_font_size": 0,
+            "progress_bar_color": "",
+            "progress_bar_height": 0,
+            "progress_bar_width": 0,
+            "show_future_cells": true,
+            "show_empty_state_message": false,
+            "layout_customize_enabled": false
+        }
+    },
+    "experience_mode": "beginner",
+    "wizard_completed": false
+}
