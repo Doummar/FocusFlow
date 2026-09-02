@@ -229,6 +229,18 @@ class HeatmapStats:
     # after activity_total, for the same positional-construction-safety
     # reason new_events above is appended where it is.
     again_count: int = 0
+    # Distinct cards touched today across ALL revlog types (0=new/learning,
+    # 1=review, 2=relearning, 3=filtered/cram) — the all-inclusive companion
+    # to cards_reviewed above, which deliberately EXCLUDES type=0. Added for
+    # the deck-browser "Daily Status" line (heatmap_widget.py), which needs
+    # an honest "cards studied today" figure; cards_reviewed alone would
+    # silently undercount on any day involving new cards, since it was
+    # designed to mirror the narrower "Reviews" stat, not total study
+    # activity. Appended at the end, after again_count, for the same
+    # positional-construction-safety reason documented on new_events and
+    # again_count above — stats() below is the only call site and it sets
+    # this via keyword, but existing positional args must not shift.
+    cards_studied: int = 0
 
 
 class HeatmapService:
@@ -250,6 +262,13 @@ class HeatmapService:
         # produce identical cache keys despite being different queries
         # (type IN (1,2,3) vs type=0) if they shared one dict.
         self._distinct_new_cards_cache: dict[tuple, int] = {}
+        # Cache for _distinct_cards_studied()'s period-level COUNT(DISTINCT
+        # cid) WHERE type IN (0,1,2,3) queries — again a SEPARATE dict from
+        # both caches above, same collision reasoning: stats() calls all
+        # three distinct-card methods with the identical (start_day, end_day)
+        # for every period, and they'd collide on cache key despite being
+        # three different queries if they shared a dict.
+        self._distinct_cards_studied_cache: dict[tuple, int] = {}
         # PERFORMANCE FIX: stats(), stats_for_year() (called once per navigable
         # year by all_year_stats()), and goal_streak() each independently
         # called self.repo.all_sessions() — a full read of every FocusFlow
@@ -275,6 +294,7 @@ class HeatmapService:
         self._year_stats_cache.clear()
         self._distinct_cards_cache.clear()
         self._distinct_new_cards_cache.clear()
+        self._distinct_cards_studied_cache.clear()
         self._all_sessions_cache = None
 
     def _get_all_sessions(self) -> list:
@@ -478,6 +498,10 @@ class HeatmapService:
             summary = summarize_sessions(items)
             nc, rc, rt_mins, rl_tot, ag_tot, hd_tot, ez_tot = _nc_rc_rt(start_dt.date(), end_d)
             dc = self._distinct_cards_reviewed(start_dt.date(), end_d)
+            # All-inclusive distinct-card count (adds type=0 on top of dc's
+            # type IN (1,2,3)) — backs the deck-browser "Daily Status" line's
+            # "studied" figure. See _distinct_cards_studied()'s docstring.
+            dcs = self._distinct_cards_studied(start_dt.date(), end_d)
             # Period-level New Cards must be a true distinct count over the
             # whole range, same reasoning as dc above: nc (from _nc_rc_rt)
             # sums each day's already-deduplicated new_cards count, which
@@ -517,6 +541,7 @@ class HeatmapService:
                 start_dt.date(), end_d,
                 activity_total=rl_tot,
                 again_count=ag_tot,
+                cards_studied=dcs,
             ))
         return result
 
@@ -727,6 +752,53 @@ class HeatmapService:
             log.exception("distinct new cards query failed")
             return 0
         self._distinct_new_cards_cache[cache_key] = count
+        return count
+
+    def _distinct_cards_studied(self, start_day: date, end_day: date) -> int:
+        """COUNT(DISTINCT cid) of ALL revlog rows (type 0, 1, 2, and 3 —
+        new/learning, review, relearning, and filtered/cram) within
+        [start_day, end_day] inclusive.
+
+        This is the all-inclusive companion to _distinct_cards_reviewed()
+        immediately above, which deliberately restricts to type IN (1,2,3)
+        to mirror the "Reviews" stat. That narrower scope makes
+        _distinct_cards_reviewed() the wrong source for an honest "cards
+        studied today" figure — on any day involving new cards it would
+        undercount, since brand-new cards (type=0) are excluded there by
+        design. This method exists specifically to back the deck-browser
+        "Daily Status" line (see heatmap_widget.py), without altering
+        _distinct_cards_reviewed()'s existing meaning or any of its
+        existing callers (e.g. the "Cards Reviewed" stat card).
+
+        Same rationale as its siblings for being a standalone COUNT(DISTINCT
+        ...) query rather than summed from _revlog_by_day's per-day
+        breakdown: distinct-card counts don't sum across days without
+        double-counting a card studied on more than one day in the range.
+        """
+        if mw is None or mw.col is None:
+            return 0
+        day_cutoff = _get_day_cutoff()
+        today = scheduler_today(day_cutoff)
+        start_ms, _ = day_bounds_ms(start_day, day_cutoff, today)
+        _, end_ms   = day_bounds_ms(end_day, day_cutoff, today)
+        try:
+            today_ord = int(mw.col.sched.today)
+        except Exception as exc:
+            log.debug("sched.today unavailable, cache key uses 0: %s", exc)
+            today_ord = 0
+        cache_key = (today_ord, start_ms, end_ms)
+        if cache_key in self._distinct_cards_studied_cache:
+            return self._distinct_cards_studied_cache[cache_key]
+        try:
+            count = int(mw.col.db.scalar(
+                "SELECT COUNT(DISTINCT cid) FROM revlog "
+                "WHERE id >= ? AND id < ? AND type IN (0, 1, 2, 3)",
+                start_ms, end_ms,
+            ) or 0)
+        except Exception:
+            log.exception("distinct cards studied query failed")
+            return 0
+        self._distinct_cards_studied_cache[cache_key] = count
         return count
 
     def _future_due_counts(self, days: int) -> dict[date, int]:

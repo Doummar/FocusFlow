@@ -393,7 +393,18 @@ class BreakRunningPopup(QDialog):
 # ── BreakFinishedPopup ────────────────────────────────────────────────────────
 
 class BreakFinishedPopup(QDialog):
-    def __init__(self, on_continue=None, parent=None) -> None:
+    """Break-finished prompt.
+
+    Deliberately has no knowledge of TimerManager/SessionCoordinator state —
+    this is a display-only dialog, same philosophy as BreakRunningPopup above.
+    Both the "Continue studying" button and the window X close it via Qt's
+    normal accept()/reject() lifecycle; the caller (SessionCoordinator)
+    connects to the dialog's `finished` signal to run the same cleanup
+    exactly once regardless of which of those two paths the user takes —
+    see on_break_completed() in session_coordinator.py.
+    """
+
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("FocusFlow — Break finished")
         self.setWindowFlags(_FLAGS); self.setFixedWidth(300)
@@ -404,7 +415,7 @@ class BreakFinishedPopup(QDialog):
         root.addWidget(_sep())
         row = QHBoxLayout(); row.addStretch()
         cont = QPushButton("Continue studying"); cont.setDefault(True)
-        cont.clicked.connect(lambda: (self.accept(), on_continue and on_continue()))
+        cont.clicked.connect(self.accept)
         row.addWidget(cont); root.addLayout(row)
 
 # ── FatigueSuggestionPopup ────────────────────────────────────────────────────

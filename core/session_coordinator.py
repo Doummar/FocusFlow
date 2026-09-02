@@ -276,8 +276,22 @@ class SessionCoordinator:
                 self._fatigue.current_state, self._fatigue.current_score
             )
         self.close_active_popup()
-        popup = BreakFinishedPopup(on_continue=self.cmd_resume_after_break, parent=mw)
+        popup = BreakFinishedPopup(parent=mw)
         self.set_active_popup(popup)
+        # BUG FIX: previously wired via BreakFinishedPopup's on_continue
+        # callback, which only fired when the Continue button was clicked —
+        # closing the dialog via the window X ran Qt's default reject()
+        # path instead, which never called cmd_resume_after_break(), so
+        # TimerManager.mode stayed stuck at TimerMode.BREAK indefinitely
+        # (has_started stayed True, blocking the next start_study() call in
+        # _on_card_shown, and the toolbar kept displaying Break state).
+        # `finished` is Qt's universal completion signal — it fires exactly
+        # once whether the dialog was accepted or rejected, so connecting
+        # it here (instead of relying on the button's own click handler)
+        # guarantees cmd_resume_after_break() runs exactly once on BOTH the
+        # Continue-button path and the X-close path, leaving mode == IDLE
+        # either way.
+        popup.finished.connect(self.cmd_resume_after_break)
         popup.show()
 
     # ── report computation (issue #14 — pure data, no side effects) ──────────
@@ -582,19 +596,33 @@ class SessionCoordinator:
 
     # ── commands ──────────────────────────────────────────────────────────────
 
-    def cmd_skip_break(self) -> None:
+    def _end_break_state(self) -> None:
+        """Shared BREAK -> IDLE transition used by both cmd_skip_break() and
+        cmd_resume_after_break() (previously two byte-identical methods).
+
+        Guarded by the timer's own mode so it's safe to call reentrantly:
+        closing a BreakFinishedPopup here (via close_active_popup()) can
+        itself trigger this same method again through popup.finished (see
+        the 1.0.29 fix, which connects that signal to
+        cmd_resume_after_break) — e.g. when the HUD's new "Resume studying"
+        menu action (-> cmd_skip_break()) is chosen while a just-finished
+        break's popup is still open. The mode check ensures that reentrant
+        inner call is the ONLY one that does any actual work — stop_idle()
+        runs exactly once, and once mode is no longer BREAK the outer call
+        returns immediately without re-running any of it.
+        """
         self.close_active_popup()
-        if self._timer_mgr:
-            self._timer_mgr.stop_idle()
+        if self._timer_mgr is None or self._timer_mgr.mode != _TimerMode.BREAK:
+            return
+        self._timer_mgr.stop_idle()
         if self._toolbar:
             self._toolbar.set_idle()
 
+    def cmd_skip_break(self) -> None:
+        self._end_break_state()
+
     def cmd_resume_after_break(self) -> None:
-        self.close_active_popup()
-        if self._timer_mgr:
-            self._timer_mgr.stop_idle()
-        if self._toolbar:
-            self._toolbar.set_idle()
+        self._end_break_state()
 
     def start_break_manual(self, is_long: bool) -> None:
         """User-initiated break from the toolbar's right-click menu — 'Short

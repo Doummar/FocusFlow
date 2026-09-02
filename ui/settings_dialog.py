@@ -213,7 +213,7 @@ Violet), or click the swatch next to the dropdown to build your own from any col
 choose &mdash; there's nothing extra to set for that.</p>"""),
 
     ("Rearranging the Panel", """
-<p><b>What it does:</b> Lets you put the heatmap, progress bar, stat cards, and streak row in
+<p><b>What it does:</b> Lets you put the heatmap, Daily status, stat cards, and streak row in
 whichever order you prefer.</p>
 <p><b>How to use it:</b> Turn on Display &rarr; Layout &rarr; <b>Enable drag-to-reorder
 layout</b>. A small &#x2630; grip appears on each of those four sections &mdash; drag one onto
@@ -1022,80 +1022,42 @@ class SettingsDialog(QDialog):
         scgv = QVBoxLayout(scg); scgv.setSpacing(2)
         scgv.setContentsMargins(9, 6, 9, 6)
 
+        # Checkboxes constructed here as before; each row (checkbox + its
+        # colour swatch) is added to scgv further below, once the swatches
+        # exist (see "Appearance" section) — consolidated from two separate
+        # rows (a visibility checkbox here, a colour-swatch label in
+        # Appearance) into one, via the existing _checkbox_with_swatch()
+        # helper, so each stat name appears only once in this dialog. No
+        # config keys, defaults, or the swatches' own behaviour changed —
+        # this is a widget-layout consolidation only.
         self.disp_eff_time    = QCheckBox("Effective time")
-        scgv.addWidget(self.disp_eff_time)
         self.disp_quality     = QCheckBox("Study Quality")
-        scgv.addWidget(self.disp_quality)
         # Kept directly under Study Quality — it decorates that card, not the
         # heatmap grid.
         self.disp_trend = QCheckBox("Study Quality trend arrow")
         self.disp_trend.setToolTip(
             "Show a trend arrow inside the Study Quality card compared to the previous period")
-        scgv.addWidget(self.disp_trend)
         self.disp_new_cards   = QCheckBox("New cards")
-        scgv.addWidget(self.disp_new_cards)
         self.disp_reviews     = QCheckBox("Reviews")
         self.disp_reviews.setToolTip(
             "Total review events (mature reviews + filtered/cram study) in the "
             "selected period. A card answered more than once counts each time —\n"
             "see \u201cCards Reviewed\u201d below for the distinct-card count.")
-        scgv.addWidget(self.disp_reviews)
         self.disp_cards_reviewed = QCheckBox("Cards Reviewed")
         self.disp_cards_reviewed.setToolTip(
             "Distinct cards behind the Reviews count — a card answered several "
             "times (relearning, repeated cram-deck study) only counts once here.")
-        scgv.addWidget(self.disp_cards_reviewed)
         self.disp_rev_time    = QCheckBox("Review time")
-        scgv.addWidget(self.disp_rev_time)
 
-        # Today's Progress bar — existence, colour, and size kept together
-        # here rather than split across the tab. Height and Width are on
-        # their own indented lines (was one combined row) so the whole group
-        # fits a half-width column.
-        self.disp_progress_bar = QCheckBox("Today's Progress bar")
+        # Today's Daily Status line — replaced the old progress bar (with its
+        # colour swatch and height/width controls) with a minimal unboxed
+        # "N studied \u00b7 M remaining" text line. No colour, height, or width
+        # to configure any more, so this is now a plain checkbox.
+        self.disp_progress_bar = QCheckBox("Daily status")
         self.disp_progress_bar.setToolTip(
-            "A progress bar under the heatmap showing today's completed "
-            "vs. remaining reviews (e.g. 233 / 300 \u2014 78%).")
-        self._progress_color = ""   # "" = default blue
-        self.swatch_progress = QPushButton("", self)
-        self.swatch_progress.setFixedSize(18, 18)
-        self.swatch_progress.setToolTip(
-            "Click to choose a custom colour for the progress bar.\n"
-            "Right-click to reset to the default blue.")
-        self.swatch_progress.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.swatch_progress.clicked.connect(self._pick_progress_color)
-        self.swatch_progress.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.swatch_progress.customContextMenuRequested.connect(self._reset_progress_color)
-        self._style_swatch(self.swatch_progress, "#5AA9FF")
-        row_progress_bar = self._checkbox_with_swatch(self.disp_progress_bar, self.swatch_progress)
-        scgv.addWidget(row_progress_bar)
-
-        self.hm_progress_height = QSpinBox(scg)
-        self.hm_progress_height.setRange(0, 40)
-        self.hm_progress_height.setSpecialValueText("Default")
-        self.hm_progress_height.setSuffix(" px")
-        self.hm_progress_height.setToolTip("How thick the Today's Progress bar is. \"Default\" is 8px.")
-        self.hm_progress_width = QSpinBox(scg)
-        self.hm_progress_width.setRange(0, 100)
-        self.hm_progress_width.setSpecialValueText("Default")
-        self.hm_progress_width.setSuffix(" %")
-        self.hm_progress_width.setToolTip(
-            "How wide the Today's Progress bar is, as a percentage of the panel width.\n"
-            "\"Default\" is 100% (full width).")
-        self.hm_progress_height.setEnabled(False)
-        self.hm_progress_width.setEnabled(False)
-        self.disp_progress_bar.toggled.connect(self.hm_progress_height.setEnabled)
-        self.disp_progress_bar.toggled.connect(self.hm_progress_width.setEnabled)
-        row_pg_height = QHBoxLayout()
-        row_pg_height.addWidget(QLabel("\u2003Height:", scg))
-        row_pg_height.addWidget(self.hm_progress_height)
-        row_pg_height.addStretch()
-        scgv.addLayout(row_pg_height)
-        row_pg_width = QHBoxLayout()
-        row_pg_width.addWidget(QLabel("\u2003Width:", scg))
-        row_pg_width.addWidget(self.hm_progress_width)
-        row_pg_width.addStretch()
-        scgv.addLayout(row_pg_width)
+            "A minimal line under the heatmap showing today's cards studied "
+            "and cards remaining (e.g. 14 studied \u00b7 6 remaining).")
+        scgv.addWidget(self.disp_progress_bar)
 
         self.disp_empty_msg = QCheckBox("\"No reviews yet\" message")
         self.disp_empty_msg.setToolTip(
@@ -1171,7 +1133,7 @@ class SettingsDialog(QDialog):
         self.hm_font_family = QFontComboBox(apg)
         self.hm_font_family.setToolTip(
             "Font used everywhere in the heatmap panel — stats cards, month/week\n"
-            "labels, streak row, progress bar. Leave untouched to match Anki's own UI font.")
+            "labels, streak row, Daily status. Leave untouched to match Anki's own UI font.")
         self.hm_font_family.setMaximumWidth(130)
         self._font_family_touched = False   # BUG FIX below explains why this matters
         self.hm_font_family.currentFontChanged.connect(self._on_font_family_changed)
@@ -1230,11 +1192,13 @@ class SettingsDialog(QDialog):
         apgv.addWidget(self.disp_colored_nums)
 
         # Per-metric colour swatches — click to choose the accent colour used
-        # for that card's number when "Colored stat numbers" is on. Paired
-        # with a plain label here rather than each metric's own visibility
-        # checkbox (those live in Stats Cards) since the colour only ever
-        # matters together with the toggle directly above, and is disabled
-        # along with it.
+        # for that card's number when "Colored stat numbers" is on.
+        # Consolidated into the Stats Cards rows below (each checkbox +
+        # its swatch on one line, via the existing _checkbox_with_swatch()
+        # helper) instead of a separate labelled row here, so each stat
+        # name appears only once in this dialog. Swatch creation, defaults,
+        # config mapping, and the enable/disable wiring below are all
+        # unchanged — only where the resulting widgets are laid out changed.
         self._num_color_defaults = {
             "eff": "#5AA9FF", "quality": "#FFA94D", "new": "#4DD9E8",
             "cards": "#B48CFF", "revtime": "#5FD97A", "cards_reviewed": "#F08FB0",
@@ -1252,12 +1216,18 @@ class SettingsDialog(QDialog):
             _sw.setEnabled(False)
         self.disp_colored_nums.toggled.connect(self._set_num_swatches_enabled)
 
-        apgv.addWidget(self._label_with_swatch("\u2003Effective time", self.swatch_eff))
-        apgv.addWidget(self._label_with_swatch("\u2003Study Quality", self.swatch_quality))
-        apgv.addWidget(self._label_with_swatch("\u2003New cards", self.swatch_new))
-        apgv.addWidget(self._label_with_swatch("\u2003Reviews", self.swatch_cards))
-        apgv.addWidget(self._label_with_swatch("\u2003Cards Reviewed", self.swatch_cards_reviewed))
-        apgv.addWidget(self._label_with_swatch("\u2003Review time", self.swatch_revtime))
+        # Stats Cards rows: each visibility checkbox (constructed earlier,
+        # in the "Stats Cards" section above) combined with its colour
+        # swatch (just constructed above) on one line. Order matches the
+        # original Stats Cards section exactly, including "Study Quality
+        # trend arrow" directly under Study Quality.
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_eff_time, self.swatch_eff))
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_quality, self.swatch_quality))
+        scgv.addWidget(self.disp_trend)
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_new_cards, self.swatch_new))
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_reviews, self.swatch_cards))
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_cards_reviewed, self.swatch_cards_reviewed))
+        scgv.addWidget(self._checkbox_with_swatch(self.disp_rev_time, self.swatch_revtime))
 
         # Opt-in custom colour for the small "Effective time / Study Quality /
         # New cards / Reviews / Cards Reviewed / Review time" label text
@@ -1306,12 +1276,12 @@ class SettingsDialog(QDialog):
         self.disp_layout_customize = QCheckBox(
             "Enable drag-to-reorder layout", lg)
         self.disp_layout_customize.setToolTip(
-            "Shows a small \u2630 grip on the heatmap, progress bar, stat cards,\n"
+            "Shows a small \u2630 grip on the heatmap, Daily status, stat cards,\n"
             "and streak row on the deck browser page. Click and drag one onto\n"
             "another to swap their order \u2014 the new order is saved automatically.")
         self.btn_reset_layout = QPushButton("Reset layout order", lg)
         self.btn_reset_layout.setToolTip(
-            "Puts heatmap / progress bar / stat cards / streak row back in "
+            "Puts heatmap / Daily status / stat cards / streak row back in "
             "their original top-to-bottom order.")
         self.btn_reset_layout.clicked.connect(self._reset_layout_order)
         row_layout_controls = QHBoxLayout()
@@ -1603,8 +1573,7 @@ class SettingsDialog(QDialog):
                   self.hm_color_metric, self.goal_display, self.hud_visibility,
                   self.hm_year_visibility, self.hm_default_view):
             w.currentIndexChanged.connect(self._auto_save)
-        for w in (self.heavy_cards, self.light_cards, self.hm_font_size,
-                  self.hm_progress_height, self.hm_progress_width, self.hm_popup_autoclose,
+        for w in (self.heavy_cards, self.light_cards, self.hm_font_size, self.hm_popup_autoclose,
                   self.hm_due_forecast_days):
             w.valueChanged.connect(self._auto_save)
         for w in (self.disp_streak_lines, self.disp_legend, self.disp_future_cells,
@@ -1943,12 +1912,6 @@ class SettingsDialog(QDialog):
             from aqt.qt import QFont
             self.hm_font_family.setCurrentFont(QFont(_font_family))
         self.hm_font_size.setValue(int(d.get("card_font_size", 0) or 0))
-        self._progress_color = str(d.get("progress_bar_color", "") or "")
-        self._style_swatch(self.swatch_progress, self._progress_color or "#5AA9FF")
-        self.hm_progress_height.setValue(int(d.get("progress_bar_height", 0) or 0))
-        self.hm_progress_width.setValue(int(d.get("progress_bar_width", 0) or 0))
-        self.hm_progress_height.setEnabled(self.disp_progress_bar.isChecked())
-        self.hm_progress_width.setEnabled(self.disp_progress_bar.isChecked())
 
     def _write_heatmap(self) -> None:
         size_values = [9, 12, 15, 18]
@@ -1960,6 +1923,13 @@ class SettingsDialog(QDialog):
         # saving Settings silently reset every note/reminder the user had
         # added back to empty. Preserve all three here.
         existing = self._config.get("heatmap", {})
+        # Carries forward "display" keys this dialog no longer has widgets
+        # for (progress_bar_color/height/width — see the "display" dict
+        # below), same reasoning and same pattern as "existing" above: keep
+        # existing users' stored values intact rather than silently wiping
+        # them on the next auto-save, even though nothing currently reads
+        # them anymore.
+        existing_display = existing.get("display", {})
         self._config["heatmap"] = {
             "cell_size":    size_values[self.hm_cell_size.currentIndex()],
             "cell_shape":   self.hm_cell_shape.currentData() or "soft",
@@ -2023,9 +1993,13 @@ class SettingsDialog(QDialog):
                 "card_font_family":   (self.hm_font_family.currentFont().family()
                                         if self._font_family_touched else ""),
                 "card_font_size":     self.hm_font_size.value(),
-                "progress_bar_color":  self._progress_color,
-                "progress_bar_height": self.hm_progress_height.value(),
-                "progress_bar_width":  self.hm_progress_width.value(),
+                # No UI controls for these three any more (the old bar's
+                # colour swatch and height/width spinboxes were removed along
+                # with the bar itself) — preserve whatever an existing user
+                # had stored rather than silently wiping it on next save.
+                "progress_bar_color":  existing_display.get("progress_bar_color", ""),
+                "progress_bar_height": existing_display.get("progress_bar_height", 0),
+                "progress_bar_width":  existing_display.get("progress_bar_width", 0),
             },
         }
 
@@ -2342,27 +2316,12 @@ class SettingsDialog(QDialog):
         self._style_swatch(self.swatch_future, "#5284C8")
         self._auto_save()
 
-    def _pick_progress_color(self) -> None:
-        from aqt.qt import QColorDialog, QColor
-        current = QColor(self._progress_color or "#5AA9FF")
-        chosen = QColorDialog.getColor(current, self, "Choose a colour")
-        if not chosen.isValid():
-            return
-        self._progress_color = chosen.name()
-        self._style_swatch(self.swatch_progress, self._progress_color)
-        self._auto_save()
-
-    def _reset_progress_color(self, _pos=None) -> None:
-        self._progress_color = ""
-        self._style_swatch(self.swatch_progress, "#5AA9FF")
-        self._auto_save()
-
     def _reset_layout_order(self) -> None:
         self._layout_block_order = ["heatmap", "progress", "cards", "streak"]
         self._auto_save()
         QMessageBox.information(
             self, "Layout reset",
-            "Heatmap, progress bar, stat cards, and streak row are back in "
+            "Heatmap, Daily status, stat cards, and streak row are back in "
             "their original order.")
 
     def _emit_changed(self) -> None:

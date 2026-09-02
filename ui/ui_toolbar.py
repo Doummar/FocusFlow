@@ -669,6 +669,18 @@ class FocusFlowToolbar(QFrame):
 
     def _show_break_menu(self, global_pos) -> None:
         menu = QMenu(self)
+        if self._break_display:
+            # Currently on a break (running or just-finished) — offer a way
+            # to leave BREAK state directly from the HUD instead of the
+            # break-start options, which wouldn't make sense mid-break.
+            # Reuses the existing skip_requested signal (already wired to
+            # SessionCoordinator.cmd_skip_break in __init__.py via the
+            # existing Skip button) rather than adding a new signal/path.
+            resume_action = menu.addAction("Resume studying")
+            chosen = menu.exec(global_pos)
+            if chosen is resume_action:
+                self.skip_requested.emit()
+            return
         short_action = menu.addAction("Short break")
         long_action  = menu.addAction("Long break")
         chosen = menu.exec(global_pos)

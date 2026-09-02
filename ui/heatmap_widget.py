@@ -2014,7 +2014,7 @@ def _build_stats_html(
         if _custom_font_family else ""
     )
     # Applying the font override sitewide (heatmap month/week labels, streak
-    # row, progress bar — not just the 5 stats cards): every element in this
+    # row, Daily status — not just the 5 stats cards): every element in this
     # panel already reads its font via var(--font-family, ...), so redefining
     # that custom property on the shared #ff-heatmap wrapper cascades the
     # chosen font everywhere at once instead of needing a separate rule per
@@ -2091,51 +2091,56 @@ def _build_stats_html(
         'gap:8px;margin-bottom:10px" id="ff-mcards">'  # no due card slot needed
     )
 
-    # ── Today's Progress bar ────────────────────────────────────────────────
-    # "N done / M total" today, as a bar under the heatmap. Uses
-    # completed-vs-remaining for TODAY specifically (not the chosen default
-    # view), since "today's progress" only makes sense as today's own number.
-    _td_done  = today_stat.reviews_count if today_stat else 0
-    _td_total = _td_done + td_due
-    _td_pct   = round(100 * _td_done / _td_total) if _td_total > 0 else 100
-    _pg_color_raw = str(_dsp.get("progress_bar_color", "") or "")
-    _pg_color = _pg_color_raw if _re.match(r"^#[0-9a-fA-F]{3,8}$", _pg_color_raw) else "#5AA9FF"
-    # Thinner by default (was 14px — read as "very thick" against the
-    # heatmap's own cell size). Text now always sits on its own line
-    # directly above the bar rather than floating disconnected to the
-    # right, so it reads as one unit at a glance.
-    _pg_height = max(4, min(40, int(_dsp.get("progress_bar_height", 0) or 8)))
-    _pg_width  = max(10, min(100, int(_dsp.get("progress_bar_width", 0) or 100)))
-    _pg_r, _pg_g, _pg_b = _hex_to_rgb(_pg_color, (90, 169, 255))
-    _pg_light = f"rgb({min(255,_pg_r+50)},{min(255,_pg_g+50)},{min(255,_pg_b+50)})"
-    _pg_text_size = max(9, min(_pg_height - 2, 13))
-    # In-bar percentage text only when the bar is tall enough to actually
-    # fit it without looking cramped; otherwise it'd just overflow a thin bar.
-    _pg_inbar_text = _pg_height >= 20
-    progress_html = (
-        f'<div style="margin:6px auto {"24px" if comfortable_sp else "10px"};max-width:700px;'
-        f'font-family:{_json.dumps(_custom_font_family) if _custom_font_family else "var(--font-family,system-ui,sans-serif)"};'
-        f'font-size:11px;color:{_resolved_subtle}">'
-        f'<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'
-        f'<span>Today\'s Progress</span>'
-        f'<span style="font-weight:600;color:{_resolved_fg}">'
-        f'{_td_done} / {_td_total} reviews &mdash; {_td_pct}%</span>'
-        f'</div>'
-        f'<div style="width:{_pg_width}%;height:{_pg_height}px;border-radius:{_pg_height}px;'
-        f'background:var(--canvas-subtle,rgba(0,0,0,0.08));overflow:hidden;'
-        f'border:1px solid var(--border,rgba(0,0,0,0.15));'
-        f'box-shadow:inset 0 1px 2px rgba(0,0,0,0.15)">'
-        f'<div style="width:{_td_pct}%;height:100%;border-radius:{_pg_height}px;'
-        f'background:linear-gradient(90deg,{_pg_color},{_pg_light});'
-        f'display:flex;align-items:center;justify-content:center;'
-        f'transition:width .3s ease;min-width:{_pg_height}px">'
-        + (f'<span style="font-size:{_pg_text_size}px;font-weight:700;color:#fff;'
-           f'text-shadow:0 1px 2px rgba(0,0,0,0.35);white-space:nowrap">{_td_pct}%</span>'
-           if _pg_inbar_text else "")
-        + '</div></div>'
-        + '</div>'
-        if show_progress and _td_total > 0 else ""
-    )
+    # ── Today's Daily Status ────────────────────────────────────────────────
+    # Minimal "N studied · M remaining" line for TODAY specifically (not the
+    # chosen default view) — same reasoning the old bar used for reading
+    # today_stat rather than default_stat: "today's status" only makes sense
+    # as today's own number. Replaces the old gradient progress bar entirely:
+    # no percentage, no fill, no gradient. "studied" comes from the new
+    # all-inclusive cards_studied stat (revlog types 0-3) — deliberately NOT
+    # reviews_count (raw events; a card answered several times today via
+    # relearning would inflate this) and NOT cards_reviewed (excludes new
+    # cards, would undercount on any day involving new-card study). See
+    # HeatmapStats.cards_studied's docstring in heatmap_service.py.
+    # "remaining" is td_due, already computed above from the live scheduler
+    # queue — unchanged. These are presented as two independent facts, not a
+    # ratio: nothing here implies studied + remaining add up to a fixed
+    # daily total (a card can legitimately be counted in both — e.g. failed
+    # today and still queued for a later relearning step).
+    _td_studied = today_stat.cards_studied if today_stat else 0
+    if show_progress and (_td_studied > 0 or td_due > 0):
+        if td_due > 0:
+            _status_line = (
+                f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
+                f'&#x202F;<span>studied</span>'
+                f'&#x2009;&middot;&#x2009;'
+                f'<span style="font-weight:600;color:{_today_col}">{td_due}</span>'
+                f'&#x202F;<span>remaining</span>'
+            )
+        else:
+            # remaining == 0 and studied > 0 (the show_progress and (...)
+            # gate above guarantees at least one is nonzero, so this branch
+            # only runs when studied > 0) — _today_col already evaluates to
+            # its "green" tier whenever td_due < 15, which td_due == 0
+            # always satisfies, so reusing it here keeps this state visually
+            # part of the same colour language as the numeric case above
+            # rather than introducing a separate hardcoded colour.
+            _status_line = (
+                f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
+                f'&#x202F;<span>studied</span>'
+                f'&#x2009;&middot;&#x2009;'
+                f'<span style="font-weight:600;color:{_today_col}">All caught up</span>'
+            )
+        progress_html = (
+            f'<div style="margin:6px auto {"24px" if comfortable_sp else "10px"};max-width:700px;'
+            f'font-family:{_json.dumps(_custom_font_family) if _custom_font_family else "var(--font-family,system-ui,sans-serif)"};'
+            f'font-size:11px;color:{_resolved_subtle}">'
+            f'<div style="margin-bottom:2px">Today</div>'
+            f'<div>{_status_line}</div>'
+            f'</div>'
+        )
+    else:
+        progress_html = ""
 
     # ── Friendly empty state ────────────────────────────────────────────────
     # Replaces the "everything reads 0" dead feeling with a short encouraging
@@ -2230,6 +2235,17 @@ def _build_stats_html(
     # whichever ones are toggled off, so hiding any combination of them never
     # leaves a dangling leading "·" (each toggle used to hardcode its own
     # leading separator, which broke as soon as an earlier segment was off).
+    #
+    # BUG FIX (1.0.28): show_streak_info previously only gated the wrapper
+    # div (_streak_row_open/_streak_row_close below) — it did NOT gate this
+    # list itself, so an individually-enabled segment (e.g. show_due_today)
+    # still rendered its text into the always-present outer container even
+    # with show_streak_info=False, just without the wrapper's flex/font/
+    # colour styling. The trailing "if show_streak_info else []" is the
+    # entire fix: it forces every segment to collapse to nothing whenever
+    # the master toggle is off, regardless of any individual setting, while
+    # leaving every individual setting's stored value and its own on/on
+    # behavior when the master IS on completely unchanged.
     _streak_segments = [
         s for s in (
             _best_streak_inline,
@@ -2238,7 +2254,7 @@ def _build_stats_html(
             attention_inline if show_attn_pref else "",
             total_reviews_inline,
         ) if s
-    ]
+    ] if show_streak_info else []
     _streak_joined = "&nbsp;&#xB7;&nbsp;".join(_streak_segments)
 
     streak_block_html = f"""<div style="margin:4px auto;max-width:700px;{_stats_shared_style}">
@@ -2978,7 +2994,7 @@ window._ffPopupAutoCloseSecs = {int(disp_cfg.get("popup_auto_close_secs", 0) or 
     # "hi" colour instead, so it always reads as part of the same palette.
     _accent_glow_css = f'<style>#ff-heatmap{{--accent-glow: rgba({hi[0]},{hi[1]},{hi[2]},0.85);}}</style>'
 
-    # ── drag-to-reorder layout (heatmap / progress bar / stat cards / streak row) ──
+    # ── drag-to-reorder layout (heatmap / Daily status / stat cards / streak row) ──
     _customize = bool(disp_cfg.get("layout_customize_enabled", False))
     _block_content = {
         # The ◀ year ▶ control renders ABOVE the grid, by design. Getting
@@ -2998,7 +3014,7 @@ window._ffPopupAutoCloseSecs = {int(disp_cfg.get("popup_auto_close_secs", 0) or 
         "streak":   stats_blocks.get("streak", ""),
     }
     _block_labels = {
-        "heatmap": "Heatmap", "progress": "Progress bar",
+        "heatmap": "Heatmap", "progress": "Daily status",
         "cards": "Stat cards", "streak": "Streak row",
     }
     _default_order = ["heatmap", "progress", "cards", "streak"]

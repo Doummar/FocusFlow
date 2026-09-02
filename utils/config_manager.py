@@ -205,7 +205,10 @@ _HEATMAP_DEFAULTS: dict[str, Any] = {
         "comfortable_spacing": True, # extra breathing room between heatmap/stats/streak
         "card_depth":        True,   # rounded corners + subtle border + hover lift on cards
         "modern_typography": True,   # bigger metric numbers, smaller labels
-        "show_progress_bar": False,  # "Today's Progress" bar under the heatmap
+        "show_progress_bar": False,  # Daily Status line under the heatmap ("N studied · M remaining").
+                                      # Key name kept as show_progress_bar for backward compatibility
+                                      # with existing users' saved on/off preference, even though the
+                                      # visual it controls is no longer a bar — see heatmap_widget.py.
         "number_colors": {           # per-metric accent colour, user-editable
             "eff": "#5AA9FF", "quality": "#FFA94D", "new": "#4DD9E8",
             "cards": "#B48CFF", "revtime": "#5FD97A", "cards_reviewed": "#F08FB0",
@@ -228,12 +231,17 @@ _HEATMAP_DEFAULTS: dict[str, Any] = {
         # hm_font_size.setSpecialValueText("Default")). 0 = follow
         # modern_typography's own sizing (32/18px) as documented below.
         "card_font_size": 0,         # 0 = follow modern_typography (32/18px)
-        "progress_bar_color": "",    # "" = default blue #5AA9FF
-        # BUG FIX: was 20, for the same reason as card_font_size above — the
-        # Settings dialog only shows "Default" at 0
-        # (hm_progress_height.setSpecialValueText("Default")).
-        "progress_bar_height": 0,    # 0 = default 8px
-        "progress_bar_width": 0,     # 0 = default 100% (full panel width)
+        # These three keys backed the old gradient progress bar's colour
+        # swatch and height/width controls. The bar was replaced by a
+        # minimal "N studied \u00b7 M remaining" text line (see
+        # heatmap_widget.py), which has no colour/height/width of its own,
+        # so these are no longer read anywhere. Left in place, unmigrated,
+        # so existing users' stored values round-trip through Settings
+        # unchanged rather than being silently dropped (settings_dialog.py's
+        # _write_heatmap() explicitly preserves them via existing_display).
+        "progress_bar_color": "",    # unused since the Daily Status redesign
+        "progress_bar_height": 0,    # unused since the Daily Status redesign
+        "progress_bar_width": 0,     # unused since the Daily Status redesign
         "show_future_cells": True,   # forecast/scheduled cells past today
         "show_empty_state_message": False,  # "No reviews yet..." line when a period is empty
         # When on, a small grip handle appears on the heatmap, stat cards,
