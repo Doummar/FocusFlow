@@ -929,6 +929,10 @@ def _on_anki_state_change(new_state: str, old_state: str) -> None:
     elif new_state in ("deckBrowser", "overview"):
         if _coordinator:
             _coordinator.auto_collapsed_this_session = False
+            # Safety net alongside _on_reviewer_will_end's cancellation —
+            # covers any transition to a non-Reviewer screen that a pending
+            # fatigue-reminder timer should not survive.
+            _coordinator.cancel_pending_fatigue_suggestion()
         if _timer_mgr and _timer_mgr.is_running:
             _timer_mgr.pause("not_reviewing")
         if _toolbar:
@@ -1020,13 +1024,13 @@ def _on_card_answered(reviewer, card, ease: int) -> None:
         if _toolbar:
             _toolbar.set_fatigue(snap.state, snap.score)
         if _coordinator:
-            if (snap.should_suggest_break
+            if (_fatigue.should_break_now()
                     and not _coordinator.fatigue_suggested
                     and _config_mgr
                     and _config_mgr.data.get("fatigue", {}).get("soft_break_prompt", True)):
                 _coordinator.fatigue_suggested = True
-                QTimer.singleShot(600, _coordinator.show_fatigue_suggestion)
-            elif not snap.should_suggest_break:
+                _coordinator.schedule_fatigue_suggestion()
+            elif not _fatigue.should_break_now():
                 _coordinator.fatigue_suggested = False
             _coordinator.apply_fatigue_to_timer(snap)
     if _coordinator:
@@ -1047,6 +1051,8 @@ def _on_operation_executed(changes, handler) -> None:
 def _on_reviewer_will_end() -> None:
     if _timer_mgr and _timer_mgr.is_running:
         _timer_mgr.pause("not_reviewing")
+    if _coordinator:
+        _coordinator.cancel_pending_fatigue_suggestion()
 
 
 def _on_editor_did_init(editor) -> None:

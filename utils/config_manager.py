@@ -27,6 +27,12 @@ _PROFILE_DEFAULTS: dict[str, Any] = {
     "timer": {
         "study_minutes": 25, "break_minutes": 5, "long_break_minutes": 15,
         "sessions_before_long_break": 4, "auto_resume_after_editor": True,
+        # Controls only BreakRunningPopup's own window flags — True (default,
+        # matches the pre-existing behaviour) keeps it above other windows
+        # via Qt.WindowType.WindowStaysOnTopHint; False makes it a normal
+        # window instead. Does not affect any other FocusFlow popup, the
+        # session-end break-choice flow, or break timing/skip/resume logic.
+        "break_popup_stay_on_top": True,
     },
     "end_conditions": {
         "cards_enabled": False, "cards_target": 25, "sessions_enabled": False,

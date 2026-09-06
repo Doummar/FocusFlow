@@ -580,11 +580,18 @@ class SettingsDialog(QDialog):
         self.long_break_minutes = QDoubleSpinBox(tg); self.long_break_minutes.setRange(1,120); self.long_break_minutes.setDecimals(1); self.long_break_minutes.setSuffix(" min")
         self.sessions_before_long = QSpinBox(tg); self.sessions_before_long.setRange(1,12)
         self.auto_resume = QCheckBox("Resume when returning from card editor", tg)
+        self.break_stay_on_top = QComboBox(tg)
+        self.break_stay_on_top.addItem("Always on top", True)
+        self.break_stay_on_top.addItem("Normal window", False)
+        self.break_stay_on_top.setToolTip(
+            "Whether the break timer popup stays above other windows while a "
+            "break is running, or behaves like a normal window instead.")
         tf.addRow("Study duration", self.focus_minutes)
         tf.addRow("Short break",    self.break_minutes)
         tf.addRow("Long break",     self.long_break_minutes)
         tf.addRow("Sessions before long break", self.sessions_before_long)
-        tf.addRow("", self.auto_resume); t1l.addWidget(tg)
+        tf.addRow("", self.auto_resume)
+        tf.addRow("Break popup",    self.break_stay_on_top); t1l.addWidget(tg)
 
         cg = QGroupBox("End Conditions", t1); cf = QFormLayout(cg)
         self.cards_enabled = QCheckBox("Cards target",         cg); self.cards_target  = QSpinBox(cg);          self.cards_target.setRange(1,9999)
@@ -1571,7 +1578,7 @@ class SettingsDialog(QDialog):
         for w in (self.hm_cell_size, self.hm_cell_shape, self.hm_note_shape, self.hm_note_position,
                   self.hm_color_scheme, self.hm_grouping, self.hm_streak_thickness, self.hm_theme,
                   self.hm_color_metric, self.goal_display, self.hud_visibility,
-                  self.hm_year_visibility, self.hm_default_view):
+                  self.hm_year_visibility, self.hm_default_view, self.break_stay_on_top):
             w.currentIndexChanged.connect(self._auto_save)
         for w in (self.heavy_cards, self.light_cards, self.hm_font_size, self.hm_popup_autoclose,
                   self.hm_due_forecast_days):
@@ -1704,6 +1711,10 @@ class SettingsDialog(QDialog):
         self.long_break_minutes.setValue(float(t.get("long_break_minutes", 15)))
         self.sessions_before_long.setValue(int(t.get("sessions_before_long_break", 4)))
         self.auto_resume.setChecked(bool(t.get("auto_resume_after_editor", True)))
+        _stay_on_top = bool(t.get("break_popup_stay_on_top", True))
+        for i in range(self.break_stay_on_top.count()):
+            if self.break_stay_on_top.itemData(i) == _stay_on_top:
+                self.break_stay_on_top.setCurrentIndex(i); break
         ec = p["end_conditions"]
         self.cards_enabled.setChecked(bool(ec.get("cards_enabled", True)))
         self.cards_target.setValue(int(ec.get("cards_target", 25)))
@@ -1752,6 +1763,7 @@ class SettingsDialog(QDialog):
         p["timer"]["long_break_minutes"]         = self.long_break_minutes.value()
         p["timer"]["sessions_before_long_break"] = self.sessions_before_long.value()
         p["timer"]["auto_resume_after_editor"]   = self.auto_resume.isChecked()
+        p["timer"]["break_popup_stay_on_top"]    = bool(self.break_stay_on_top.currentData())
         p["end_conditions"]["cards_enabled"]    = self.cards_enabled.isChecked()
         p["end_conditions"]["cards_target"]     = self.cards_target.value()
         p["end_conditions"]["sessions_enabled"] = self.sessions_en.isChecked()

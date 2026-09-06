@@ -11,7 +11,7 @@ from aqt.qt import (
     QSize, Qt, QVBoxLayout, QWidget,
 )
 
-from ..services.heatmap_service import HeatmapDay, HeatmapService, HeatmapStats, activity_total, raw_study_events, scheduler_today, _get_day_cutoff
+from ..services.heatmap_service import HeatmapDay, HeatmapService, HeatmapStats, activity_total, raw_study_events, scheduler_today, _get_day_cutoff, day_bounds_ms
 from ..utils.config_manager import strip_lone_surrogates
 from ..utils.logger import log
 
@@ -1642,6 +1642,7 @@ def _build_stats_html(
     today_day: HeatmapDay | None = None,
     future_days: list[HeatmapDay] | None = None,
     due_today_override: int | None = None,
+    due_tomorrow_override: int | None = None,
     display: dict | None = None,
     default_view: str = "today",
     remembered_day: HeatmapDay | None = None,
@@ -1875,6 +1876,13 @@ def _build_stats_html(
     td_due = (due_today_override
               if due_today_override is not None
               else (today_day.due_cards if today_day else 0))
+    # Cards due tomorrow — computed via fresh, cutoff-aware SQL in
+    # build_heatmap_html (see the block right before due_tomorrow_override
+    # is passed in) and used directly for the Daily Status line below.
+    # No cached HeatmapDay equivalent exists for "tomorrow" the way
+    # today_day.due_cards does for today, so this simply defaults to 0 if
+    # the override wasn't supplied for some reason.
+    td_due_tomorrow = due_tomorrow_override if due_tomorrow_override is not None else 0
     if today_day and today_day.due_cards > 0:
         _due_parts = []
         if today_day.rev_due > 0: _due_parts.append(f"{today_day.rev_due} review")
@@ -2092,23 +2100,29 @@ def _build_stats_html(
     )
 
     # ── Today's Daily Status ────────────────────────────────────────────────
-    # Minimal "N studied · M remaining" line for TODAY specifically (not the
-    # chosen default view) — same reasoning the old bar used for reading
-    # today_stat rather than default_stat: "today's status" only makes sense
-    # as today's own number. Replaces the old gradient progress bar entirely:
-    # no percentage, no fill, no gradient. "studied" comes from the new
+    # Minimal "N studied · M remaining" / "N studied · M due tomorrow" line
+    # for TODAY specifically (not the chosen default view) — same reasoning
+    # the old bar used for reading today_stat rather than default_stat:
+    # "today's status" only makes sense as today's own number. No
+    # percentage, no fill, no gradient. "studied" comes from the new
     # all-inclusive cards_studied stat (revlog types 0-3) — deliberately NOT
     # reviews_count (raw events; a card answered several times today via
     # relearning would inflate this) and NOT cards_reviewed (excludes new
     # cards, would undercount on any day involving new-card study). See
     # HeatmapStats.cards_studied's docstring in heatmap_service.py.
-    # "remaining" is td_due, already computed above from the live scheduler
-    # queue — unchanged. These are presented as two independent facts, not a
-    # ratio: nothing here implies studied + remaining add up to a fixed
-    # daily total (a card can legitimately be counted in both — e.g. failed
-    # today and still queued for a later relearning step).
+    # "remaining" is td_due, already computed above from the live,
+    # deck-limit-aware scheduler queue — unchanged. "due tomorrow" is
+    # td_due_tomorrow (see the cutoff-aware query in build_heatmap_html,
+    # right before due_tomorrow_override is passed in) — deliberately NOT
+    # deck-limit-aware, since Anki exposes no forward-looking equivalent of
+    # sched.counts(); worded plainly as "due tomorrow" rather than implied
+    # to carry the same today's-limits guarantee "remaining" does. All of
+    # these are independent facts, never a ratio: nothing here implies
+    # studied + remaining (or + due tomorrow) add up to a fixed total (a
+    # card can legitimately be counted in more than one — e.g. failed today
+    # and still queued for a later relearning step).
     _td_studied = today_stat.cards_studied if today_stat else 0
-    if show_progress and (_td_studied > 0 or td_due > 0):
+    if show_progress and (_td_studied > 0 or td_due > 0 or td_due_tomorrow > 0):
         if td_due > 0:
             _status_line = (
                 f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
@@ -2117,25 +2131,35 @@ def _build_stats_html(
                 f'<span style="font-weight:600;color:{_today_col}">{td_due}</span>'
                 f'&#x202F;<span>remaining</span>'
             )
-        else:
-            # remaining == 0 and studied > 0 (the show_progress and (...)
-            # gate above guarantees at least one is nonzero, so this branch
-            # only runs when studied > 0) — _today_col already evaluates to
-            # its "green" tier whenever td_due < 15, which td_due == 0
-            # always satisfies, so reusing it here keeps this state visually
-            # part of the same colour language as the numeric case above
-            # rather than introducing a separate hardcoded colour.
+        elif td_due_tomorrow > 0:
+            _tomorrow_col = ("#b05c00" if td_due_tomorrow >= 50 else
+                              "#5a6e8a" if td_due_tomorrow >= 15 else "#2e7a40")
             _status_line = (
                 f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
                 f'&#x202F;<span>studied</span>'
                 f'&#x2009;&middot;&#x2009;'
-                f'<span style="font-weight:600;color:{_today_col}">All caught up</span>'
+                f'<span style="font-weight:600;color:{_tomorrow_col}">{td_due_tomorrow}</span>'
+                f'&#x202F;<span>due tomorrow</span>'
+            )
+        else:
+            # td_due == 0 and td_due_tomorrow == 0 — the gate above
+            # guarantees at least one of studied/td_due/td_due_tomorrow is
+            # nonzero, so reaching here means studied > 0. _today_col
+            # already evaluates to its "green" tier whenever td_due < 15,
+            # which td_due == 0 always satisfies, so reusing it here keeps
+            # this state visually part of the same colour language as the
+            # numeric branches above rather than introducing a separate
+            # hardcoded colour.
+            _status_line = (
+                f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
+                f'&#x202F;<span>studied</span>'
+                f'&#x2009;&middot;&#x2009;'
+                f'<span style="font-weight:600;color:{_today_col}">No cards due tomorrow</span>'
             )
         progress_html = (
             f'<div style="margin:6px auto {"24px" if comfortable_sp else "10px"};max-width:700px;'
             f'font-family:{_json.dumps(_custom_font_family) if _custom_font_family else "var(--font-family,system-ui,sans-serif)"};'
             f'font-size:11px;color:{_resolved_subtle}">'
-            f'<div style="margin-bottom:2px">Today</div>'
             f'<div>{_status_line}</div>'
             f'</div>'
         )
@@ -2828,6 +2852,58 @@ def build_heatmap_html(
         except Exception:
             pass
 
+        # ── Cards due tomorrow (for the Daily Status line) ──────────────────
+        # Deliberately NOT reusing _future_due_counts() (services/heatmap_
+        # service.py) — that method's short-term-learning bucket uses
+        # calendar midnight instead of Anki's actual day-cutoff hour, which
+        # would misclassify learning-queue cards near the cutoff. This is a
+        # self-contained, cutoff-correct query instead, scoped to exactly
+        # one day (tomorrow), following the same review/day-relearn-by-
+        # ordinal + intraday-learning-by-timestamp split as _due_today_count
+        # just above, and the same "prefer robustness, fall back
+        # defensively" style.
+        #
+        # New cards (queue=0) are deliberately excluded: they have no
+        # individual scheduled due date, only a daily quota that resets at
+        # the day boundary, so "new cards available tomorrow" isn't
+        # something FocusFlow can honestly answer from a due-date lookup.
+        # Deck limits are also NOT applied, for the same reason
+        # sched.counts() has no forward-looking equivalent — see
+        # _due_today_count's own BUG comment above for the identical class
+        # of issue already fixed for TODAY's count, which cannot be fixed
+        # the same way for tomorrow. This is why the Daily Status line
+        # below words this as "due tomorrow" rather than implying the same
+        # limits-aware guarantee "remaining" carries.
+        _due_tomorrow_count: int = 0
+        try:
+            from aqt import mw as _mw2
+            if _mw2 and _mw2.col:
+                try:
+                    _tod2 = int(_mw2.col.sched.today)
+                except Exception:
+                    from datetime import date as _date_fb2
+                    _tod2 = (_date_fb2.today() - _date_fb2(2006, 1, 1)).days
+                _tomorrow_ord = _tod2 + 1
+                _reviewish_tomorrow = int(_mw2.col.db.scalar(
+                    "SELECT count() FROM cards WHERE queue IN (2, 3) AND due = ?",
+                    _tomorrow_ord,
+                ) or 0)
+                _day_cutoff2 = _get_day_cutoff()
+                _today_date2 = scheduler_today(_day_cutoff2)
+                _tomorrow_date2 = _today_date2 + timedelta(days=1)
+                # day_bounds_ms() documents a half-open [start, end) interval
+                # per its own docstring — using >= / < here, not > / <=, to
+                # match that contract precisely (also correctly cutoff-aware,
+                # unlike _future_due_counts()'s equivalent query).
+                _start_ms, _end_ms = day_bounds_ms(_tomorrow_date2, _day_cutoff2, _today_date2)
+                _lrn_tomorrow = int(_mw2.col.db.scalar(
+                    "SELECT count() FROM cards WHERE queue = 1 AND due >= ? AND due < ?",
+                    _start_ms // 1000, _end_ms // 1000,
+                ) or 0)
+                _due_tomorrow_count = _reviewish_tomorrow + _lrn_tomorrow
+        except Exception:
+            pass
+
         try:
             stats_blocks = _build_stats_html(
                 period_stats, year_stats, cur_year,
@@ -2835,6 +2911,7 @@ def build_heatmap_html(
                 today_day=today_day,
                 future_days=future_days,
                 due_today_override=_due_today_count,
+                due_tomorrow_override=_due_tomorrow_count,
                 display=disp_cfg,
                 default_view=_default_view,
                 remembered_day=remembered_day,

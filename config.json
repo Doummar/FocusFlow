@@ -6,7 +6,8 @@
                 "break_minutes": 5,
                 "long_break_minutes": 15,
                 "sessions_before_long_break": 4,
-                "auto_resume_after_editor": true
+                "auto_resume_after_editor": true,
+                "break_popup_stay_on_top": true
             },
             "end_conditions": {
                 "cards_enabled": false,

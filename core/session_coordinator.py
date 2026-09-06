@@ -130,6 +130,12 @@ class SessionCoordinator:
         self._active_popup: Optional[object] = None
         self._tick_count: int = 0  # throttle update_conditions to every 2 s
 
+        # Owned, cancellation-safe replacement for the old bare
+        # QTimer.singleShot(600, ...) fatigue-reminder scheduling (see
+        # schedule_fatigue_suggestion() / cancel_pending_fatigue_suggestion()
+        # below). None when no reminder is currently pending.
+        self._fatigue_timer: Optional[object] = None
+
         # "All due cleared today" goal has no fixed target of its own, so we
         # snapshot the due count the first time we see it each day and treat
         # that as 100% — this lets the progress bar work for that condition
@@ -659,6 +665,9 @@ class SessionCoordinator:
         self.close_active_popup()
         if self._timer_mgr:
             self._timer_mgr.start_break(duration_seconds=duration_seconds)
+        _stay_on_top = bool(
+            self._config_mgr.data.get("timer", {}).get("break_popup_stay_on_top", True)
+        )
         popup = BreakRunningPopup(
             break_seconds=duration_seconds,
             break_label=label,
@@ -666,6 +675,7 @@ class SessionCoordinator:
             effective_secs=eff_secs,
             quality_score=quality,
             on_end_early=self.cmd_skip_break,
+            stay_on_top=_stay_on_top,
             parent=mw,
         )
         # Drive the popup countdown from the TimerManager tick signal so there
@@ -681,10 +691,82 @@ class SessionCoordinator:
         self.set_active_popup(popup)
         popup.show()
 
+    # ── fatigue-reminder scheduling (cancellation-safe) ───────────────────────
+    #
+    # _on_card_answered (in __init__.py) calls schedule_fatigue_suggestion()
+    # instead of a bare QTimer.singleShot(...). The timer is owned here so it
+    # can be cancelled from cancel_pending_fatigue_suggestion() on reviewer
+    # exit / state transitions, instead of firing unconditionally 600ms later
+    # regardless of what happened in between.
+
+    _FATIGUE_POPUP_DELAY_MS = 600
+
+    def schedule_fatigue_suggestion(self) -> None:
+        """Arm the delayed fatigue-reminder popup.
+
+        Called once per fatigue episode from _on_card_answered, guarded there
+        by the existing `fatigue_suggested` latch so this never double-schedules
+        for the same dip. Any previously pending timer (there shouldn't be one,
+        given the latch, but this keeps the method safe to call defensively)
+        is stopped first so there is never more than one in flight.
+        """
+        from aqt.qt import QTimer
+
+        self.cancel_pending_fatigue_suggestion()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(self.show_fatigue_suggestion)
+        self._fatigue_timer = timer
+        timer.start(self._FATIGUE_POPUP_DELAY_MS)
+
+    def cancel_pending_fatigue_suggestion(self) -> None:
+        """Stop a pending fatigue-reminder timer, if any, without firing it.
+
+        Called when the user leaves the Reviewer before the delay elapses
+        (see _on_reviewer_will_end / _on_anki_state_change in __init__.py).
+        Deliberately does NOT touch `fatigue_suggested` — cancelling a
+        not-yet-shown reminder is not the same as the fatigue condition
+        having resolved, so the latch is left exactly as it was. If fatigue
+        is still present next time a card is answered in the Reviewer, the
+        latch already being True means it won't try to reschedule; that is
+        the existing, unchanged one-shot-per-episode behaviour, not a new
+        loss — nothing was silently dropped here, it just never fired.
+        """
+        if self._fatigue_timer is not None:
+            try:
+                self._fatigue_timer.stop()
+            except Exception as exc:
+                log.debug("fatigue timer stop failed (already gone?): %s", exc)
+            self._fatigue_timer = None
+
     def show_fatigue_suggestion(self) -> None:
+        """Fire-time handler for the delayed fatigue reminder.
+
+        Re-validates live state instead of trusting the decision made 600ms
+        earlier at schedule time:
+          1. No other FocusFlow popup is currently active (a break/session
+             popup already asked about a break — showing both is redundant).
+          2. The user is still on the Reviewer screen.
+          3. Fatigue has not since recovered (a later card answer may have
+             already resolved it before this timer fired), using the same
+             persistence-gated condition (should_break_now()) that decided
+             whether to schedule this in the first place.
+        Any failed check simply skips showing the popup; `fatigue_suggested`
+        is left untouched in every case, since the underlying answer-history
+        state it tracks already reflects the true, current fatigue condition.
+        """
+        self._fatigue_timer = None
+
         if self._active_popup is not None:
             return
+
         from aqt import mw
+        if mw is None or getattr(mw, "state", None) != "review":
+            return
+
+        if self._fatigue is not None and not self._fatigue.should_break_now():
+            return
+
         from ..ui.popups import FatigueSuggestionPopup
 
         popup = FatigueSuggestionPopup(

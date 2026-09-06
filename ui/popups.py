@@ -330,13 +330,20 @@ class BreakRunningPopup(QDialog):
         effective_secs: int = 0,
         quality_score: float = 0.0,
         on_end_early: Callable | None = None,
+        stay_on_top: bool = True,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._on_end_early = on_end_early
         self._total        = max(break_seconds, 1)
         self.setWindowTitle("FocusFlow — Break")
-        self.setWindowFlags(_FLAGS); self.setFixedWidth(340)
+        # _FLAGS (module-level, shared by every popup in this file) always
+        # includes WindowStaysOnTopHint. This is the one popup with a
+        # user-facing preference for that specifically (Settings -> Timer ->
+        # "Break popup"), so it chooses its own flags instead of using
+        # _FLAGS directly — every other popup class here is unaffected.
+        _break_popup_flags = _FLAGS if stay_on_top else Qt.WindowType.Window
+        self.setWindowFlags(_break_popup_flags); self.setFixedWidth(340)
         self.setModal(False); self.setStyleSheet(_STYLE)
 
         root = QVBoxLayout(self)

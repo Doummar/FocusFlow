@@ -112,6 +112,17 @@ class FatigueTracker:
     RECENT_N   = 8    # "right now" window
     MIN_CARDS  = 10   # kept for backward-compat / tests; runtime uses _min_cards()
 
+    # Number of CONSECUTIVE answered cards that must all report
+    # should_suggest_break=True before should_break_now() agrees -- i.e.
+    # before the break-suggestion popup is allowed to fire. This does NOT
+    # change the meaning of FatigueSnapshot.should_suggest_break itself
+    # (still an instantaneous, per-card fact used live by the HUD indicator
+    # and apply_fatigue_to_timer()'s adaptive-duration multiplier); it only
+    # gates the separate, more conservative decision of whether to actually
+    # interrupt the user. See should_break_now() below. Internal constant,
+    # not user-configurable, by design (see investigation report).
+    _PERSISTENCE_N = 3
+
     _W_RT    = 0.25   # mean RT drift
     _W_IIV   = 0.30   # variability drift
     _W_AR    = 0.30   # weighted again-rate drift
@@ -144,6 +155,10 @@ class FatigueTracker:
         self._card_pause_secs:    float        = 0.0   # paused secs accumulated for current card = deque(maxlen=60)
         self.current_score = 1.0
         self.current_state = "focused"
+        # Consecutive-card counter backing should_break_now() -- incremented
+        # each time record_answer() reports should_suggest_break=True,
+        # reset to 0 the instant a card reports False. See _PERSISTENCE_N.
+        self._consecutive_low = 0
 
     def update_config(self, config: dict) -> None:
         self._config = config
@@ -233,6 +248,15 @@ class FatigueTracker:
         snap = self._compute()
         self.current_score = snap.score
         self.current_state = snap.state
+        # Persistence tracking for should_break_now() -- see _PERSISTENCE_N.
+        # Deliberately keyed off this card's own instantaneous
+        # should_suggest_break, not off should_break_now() itself, so this
+        # is a plain consecutive-run counter rather than a
+        # read-modify-write against its own gated output.
+        if snap.should_suggest_break:
+            self._consecutive_low += 1
+        else:
+            self._consecutive_low = 0
         return snap
 
     def editor_opened(self) -> None:
@@ -270,6 +294,7 @@ class FatigueTracker:
             self._answers.append(ans)
         self.current_score = 1.0
         self.current_state = "focused"
+        self._consecutive_low = 0
 
     def session_again_rate(self) -> float:
         """Overall review-card again rate for the current session.
@@ -287,6 +312,22 @@ class FatigueTracker:
 
     def current_snapshot(self) -> FatigueSnapshot:
         return self._compute()
+
+    def should_break_now(self) -> bool:
+        """Persistence-gated decision for the break-suggestion popup only.
+
+        True once should_suggest_break has held for _PERSISTENCE_N
+        consecutive answered cards. FatigueSnapshot.should_suggest_break
+        itself is unaffected by this -- it remains the live, instantaneous
+        per-card fact that the HUD fatigue indicator and
+        apply_fatigue_to_timer()'s adaptive-duration multiplier correctly
+        want. This method exists specifically so a single noisy card (or a
+        brief, non-sustained rough patch -- see the false-positive
+        investigation) cannot by itself interrupt the user with a popup;
+        only a deterioration that persists across several consecutive
+        cards can.
+        """
+        return self._consecutive_low >= self._PERSISTENCE_N
 
     # ── config helpers ────────────────────────────────────────────────────────
 

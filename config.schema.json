@@ -42,7 +42,8 @@
             "break_minutes":               { "type": "number",  "minimum": 1, "maximum": 60  },
             "long_break_minutes":          { "type": "number",  "minimum": 1, "maximum": 120 },
             "sessions_before_long_break":  { "type": "integer", "minimum": 1, "maximum": 20  },
-            "auto_resume_after_editor":    { "type": "boolean" }
+            "auto_resume_after_editor":    { "type": "boolean" },
+            "break_popup_stay_on_top":     { "type": "boolean" }
           }
         },
         "end_conditions": {
