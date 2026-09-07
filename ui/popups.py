@@ -327,8 +327,7 @@ class BreakRunningPopup(QDialog):
         break_seconds: int,
         break_label: str,
         cards_done: int = 0,
-        effective_secs: int = 0,
-        quality_score: float = 0.0,
+        elapsed_secs: int = 0,
         on_end_early: Callable | None = None,
         stay_on_top: bool = True,
         parent=None,
@@ -352,10 +351,9 @@ class BreakRunningPopup(QDialog):
         title = QLabel(f"Break — {break_label}"); title.setFont(_h1())
         root.addWidget(title)
 
-        if cards_done or effective_secs:
+        if cards_done or elapsed_secs:
             stats_lbl = QLabel(
-                f"{cards_done} cards · {_fmt_secs(effective_secs)} effective"
-                f" · {quality_score:.0%} quality"
+                f"{cards_done} cards · {_fmt_secs(elapsed_secs)} studied"
             )
             stats_lbl.setStyleSheet("font-size:11px;")
             root.addWidget(stats_lbl)

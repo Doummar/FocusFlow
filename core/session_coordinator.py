@@ -82,6 +82,15 @@ class SessionReport:
     # (see _compute_report() below), so there is no positional-order risk,
     # but appending keeps the same convention used for HeatmapStats.
     new_events_today: int
+    # Real, unmultiplied study-timer elapsed seconds for this session (i.e.
+    # snapshot.elapsed_seconds, before any fatigue-score discounting).
+    # Added specifically for BreakRunningPopup's post-session stats line,
+    # which shows actual elapsed time rather than the eff_secs/score-derived
+    # figure other popups (SessionSummaryPopup/BreakChoicePopup/
+    # GoalReachedPopup) still use unchanged. Appended at the end per the
+    # same positional-construction-safety convention as new_events_today
+    # above.
+    elapsed_secs: int
 
 
 # ── coordinator class ─────────────────────────────────────────────────────────
@@ -323,6 +332,7 @@ class SessionCoordinator:
         ec        = profile.get("end_conditions", {})
         eff_secs  = int(snapshot.elapsed_seconds * score)
         eff_mins  = snapshot.elapsed_seconds / 60.0 * score
+        elapsed_secs = int(snapshot.elapsed_seconds)
         cards_done = getattr(session, "cards_done", 0)
 
         # Persist goal BEFORE reading streak so today counts in goal_streak().
@@ -381,6 +391,7 @@ class SessionCoordinator:
             long_label=f"{long_mins}-min long break",
             norm_label=f"{norm_mins}-min break",
             new_events_today=new_events_today,
+            elapsed_secs=elapsed_secs,
         )
 
     # ── popup display (issue #14 — pure UI, no DB or timer calls) ────────────
@@ -424,11 +435,11 @@ class SessionCoordinator:
         if not show_report:
             if r.is_long:
                 self.start_break(
-                    r.long_mins * 60, r.long_label, r.cards_done, r.eff_secs, r.score
+                    r.long_mins * 60, r.long_label, r.cards_done, r.elapsed_secs
                 )
             else:
                 self.start_break(
-                    r.norm_mins * 60, r.norm_label, r.cards_done, r.eff_secs, r.score
+                    r.norm_mins * 60, r.norm_label, r.cards_done, r.elapsed_secs
                 )
             return
 
@@ -443,10 +454,10 @@ class SessionCoordinator:
                 duration_seconds=elapsed_raw,
                 fatigue_score=r.score,
                 on_long_break=lambda: self.start_break(
-                    r.long_mins * 60, r.long_label, r.cards_done, r.eff_secs, r.score
+                    r.long_mins * 60, r.long_label, r.cards_done, r.elapsed_secs
                 ),
                 on_normal_break=lambda: self.start_break(
-                    r.norm_mins * 60, r.norm_label, r.cards_done, r.eff_secs, r.score
+                    r.norm_mins * 60, r.norm_label, r.cards_done, r.elapsed_secs
                 ),
                 on_skip_break=self.cmd_skip_break,
                 parent=mw,
@@ -460,7 +471,7 @@ class SessionCoordinator:
                 again_rate=r.today_rate,
                 avg_7day_again_rate=r.week_avg,
                 on_start_break=lambda: self.start_break(
-                    r.norm_mins * 60, r.norm_label, r.cards_done, r.eff_secs, r.score
+                    r.norm_mins * 60, r.norm_label, r.cards_done, r.elapsed_secs
                 ),
                 on_skip_break=self.cmd_skip_break,
                 parent=mw,
@@ -644,15 +655,14 @@ class SessionCoordinator:
         else:
             mins  = int(t.get("break_minutes", 5))
             label = f"{mins}-minute break"
-        self.start_break(mins * 60, label, 0, 0, 0.0)
+        self.start_break(mins * 60, label, 0, 0)
 
     def start_break(
         self,
         duration_seconds: int,
-        label:      str,
-        cards_done: int   = 0,
-        eff_secs:   int   = 0,
-        quality:    float = 0.0,
+        label:        str,
+        cards_done:   int = 0,
+        elapsed_secs: int = 0,
     ) -> None:
         """Start a break timer and show the running-break popup.
 
@@ -672,8 +682,7 @@ class SessionCoordinator:
             break_seconds=duration_seconds,
             break_label=label,
             cards_done=cards_done,
-            effective_secs=eff_secs,
-            quality_score=quality,
+            elapsed_secs=elapsed_secs,
             on_end_early=self.cmd_skip_break,
             stay_on_top=_stay_on_top,
             parent=mw,

@@ -952,7 +952,23 @@ def _on_application_state_changed(state) -> None:
     away from the desk is not counted as study time.  Resumes only on Active,
     and only if the pause was caused by this handler (pause_reason "focus_lost")
     so manual pauses are not accidentally cleared.
+
+    EXCEPTION: while a break is running AND "Break popup stays on top"
+    (timer.break_popup_stay_on_top) is enabled, focus loss must NOT pause the
+    break countdown -- the whole point of that setting is to let the
+    countdown keep running, visibly, while the user works in another
+    application. Study-mode auto-pause, and break-mode auto-pause when
+    stay-on-top is OFF, are both unchanged below.
     """
+    if _timer_mgr and _timer_mgr.mode == TimerMode.BREAK and _config_mgr:
+        stay_on_top = bool(
+            _config_mgr.data.get("timer", {}).get(
+                "break_popup_stay_on_top", True
+            )
+        )
+        if stay_on_top:
+            return
+
     try:
         from aqt.qt import Qt
         active = (state == Qt.ApplicationState.ApplicationActive)
