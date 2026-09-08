@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ..ui.ui_toolbar import FocusFlowToolbar
 
 from .timer_manager import TimerMode as _TimerMode
+from ..services.heatmap_service import scheduler_today as _scheduler_today, _get_day_cutoff
 from ..utils.logger import log
 
 
@@ -341,7 +342,9 @@ class SessionCoordinator:
             self.goal_reported = True   # set BEFORE the DB write (issue #7)
             try:
                 if self._heatmap_svc:
-                    self._heatmap_svc.repo.mark_goal_reached(date.today())
+                    self._heatmap_svc.repo.mark_goal_reached(
+                        _scheduler_today(_get_day_cutoff())
+                    )
                     self._heatmap_svc.refresh_goal_days()
             except Exception as exc:
                 log.error("goal persist failed: %s", exc)
@@ -606,7 +609,9 @@ class SessionCoordinator:
             if self._authoritative_queue_counts()[3] > 0:
                 return
             self.goal_reported = True   # set BEFORE the DB write
-            self._heatmap_svc.repo.mark_goal_reached(date.today())
+            self._heatmap_svc.repo.mark_goal_reached(
+                _scheduler_today(_get_day_cutoff())
+            )
             self._heatmap_svc.refresh_goal_days()
         except Exception as exc:
             log.error("all_due goal check failed: %s", exc)

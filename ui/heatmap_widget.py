@@ -492,7 +492,7 @@ def _day_json(d: HeatmapDay, heavy_cards: int, light_cards: int,
     total = d.reviews_count + d.new_cards + d.relearned
 
     if d.sessions == 0 and total == 0:
-        _is_today = (d.day == date.today())
+        _is_today = (d.day == scheduler_today(_get_day_cutoff()))
         return _j.dumps({
             "state": "no_data", "ctx": ctx,
             "date":  d.day.isoformat(),
@@ -511,7 +511,7 @@ def _day_json(d: HeatmapDay, heavy_cards: int, light_cards: int,
         })
 
     rev_mins = round(d.review_time_seconds / 60, 1) if d.review_time_seconds else 0
-    _is_today = (d.day == date.today())
+    _is_today = (d.day == scheduler_today(_get_day_cutoff()))
     return _j.dumps({
         "state":    "no_session" if d.sessions == 0 else "session",
         "ctx":      ctx,
@@ -759,7 +759,7 @@ def _layout_monthly(days: list[HeatmapDay], cell: int, lo: tuple, hi: tuple,
     y0         = 16 if _show_month_names else 4
     label_h    = 14
     grid_h     = 7 * step - gap
-    today      = date.today()
+    today      = scheduler_today(_get_day_cutoff())
     max_eff    = max((d.effective_minutes  for d in days if not d.is_future), default=0.0)
     max_due    = max((d.due_cards          for d in days if d.is_future),     default=1)
     max_time   = max((d.review_time_seconds for d in days if not d.is_future), default=1.0)
@@ -879,7 +879,7 @@ def _layout_year(days: list[HeatmapDay], cell: int, lo: tuple, hi: tuple,
     x0      = dow_w + 6
     y0      = 16
     grid_h  = 7 * step - gap
-    today   = date.today()
+    today   = scheduler_today(_get_day_cutoff())
     max_eff  = max((d.effective_minutes   for d in days if not d.is_future), default=0.0)
     max_due  = max((d.due_cards           for d in days if d.is_future),     default=1)
     max_time = max((d.review_time_seconds for d in days if not d.is_future), default=1.0)
@@ -993,7 +993,7 @@ def _layout_weekly(days: list[HeatmapDay], cell: int, lo: tuple, hi: tuple,
     x0        = dow_w + 6
     y0        = 16
     grid_h    = 7 * step - gap
-    today     = date.today()
+    today     = scheduler_today(_get_day_cutoff())
     max_eff   = max((d.effective_minutes   for d in days if not d.is_future), default=0.0)
     max_due   = max((d.due_cards           for d in days if d.is_future),     default=1)
     max_time  = max((d.review_time_seconds for d in days if not d.is_future), default=1.0)
@@ -1933,7 +1933,7 @@ def _build_stats_html(
                     "cards": _cards(today_stat), "cards_reviewed": _dc(today_stat),
                     "revtime": _fmt_mins(_rev_time(today_stat)),
                     "due": td_due, "due_str": td_due_str,
-                    "date": date.today().isoformat(),
+                    "date": scheduler_today(_get_day_cutoff()).isoformat(),
                     "start": _range(today_stat)[0], "end": _range(today_stat)[1]},
         "week":    {"eff": _fmt_mins(_eff(week_stat)),    "q": f"{_q(week_stat):.0%}",
                     "q_raw": _q(week_stat),    "new": _new(week_stat),
@@ -2359,7 +2359,7 @@ class HeatmapCanvas(QWidget):
         if not self._days: return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        step = _CELL + _GAP; x0 = 8; y0 = 22; today = date.today()
+        step = _CELL + _GAP; x0 = 8; y0 = 22; today = scheduler_today(_get_day_cutoff())
         lo, hi  = COLOR_SCHEMES.get(self._scheme, COLOR_SCHEMES["forest"])
         max_eff = max((d.effective_minutes for d in self._days if not d.is_future), default=0.0)
         max_due = max((d.due_cards        for d in self._days if d.is_future),     default=1)
@@ -2779,10 +2779,19 @@ def build_heatmap_html(
         # Extract today's HeatmapDay from days_by_year so the Today card
         # reads from the exact same revlog source as the day-detail card.
         # This fixes the data mismatch between Today and clicking today's cell.
+        #
+        # Uses scheduler_today() here specifically (not the `today`/`cur_year`
+        # variables above, which intentionally stay calendar-date-based --
+        # they drive Year navigation's default/visible year, out of scope
+        # for this fix) so this particular lookup matches the same
+        # scheduler-day definition HeatmapService itself uses to bucket
+        # `d.day`, rather than a naive calendar date that can be one day
+        # off around midnight for non-default Anki day-start times.
         today_day: HeatmapDay | None = None
+        _scheduler_today_for_card = scheduler_today(_get_day_cutoff())
         cur_year_days = days_by_year.get(cur_year, [])
         for d in cur_year_days:
-            if d.day == today and not d.is_future:
+            if d.day == _scheduler_today_for_card and not d.is_future:
                 today_day = d
                 break
         # "Remember Last Selection" — look up the previously-clicked date
@@ -2810,29 +2819,47 @@ def build_heatmap_html(
             (d for days in days_by_year.values() for d in days if d.is_future),
             key=lambda d: d.day,
         )
-        # Single SQL query — covers all actionable card states without needing
-        # sched.counts() (which returns (0,0,0) in the deck browser in Anki 25.x).
-        #   queue=2  review cards        due = ordinal day
-        #   queue=3  day-relearn steps   due = ordinal day
-        #   queue=1  intraday learning   due = unix timestamp (seconds)
+        # COLLECTION-WIDE FIX (1.0.38): sched.counts() only ever reflects
+        # whichever deck is currently "selected" (col.decks.selected()) --
+        # i.e. whatever deck the user most recently studied or clicked into
+        # -- plus that deck's own subdecks. It has no collection-wide mode,
+        # so Daily Status was silently tracking "the last deck I studied"
+        # instead of the whole collection (verified: selecting Deck A/B/C
+        # each in turn produced Deck A/B/C's own totals, never the sum).
         #
-        # BUG (found by user report + screenshot): the raw-SQL count below
-        # ignores each deck's daily new/review limits entirely, so once
-        # today's limit is used up it kept counting the remaining backlog as
-        # "due today" even though Anki's own deck list correctly shows 0/0/0
-        # for the day. sched.counts() *does* respect those limits — the
-        # (0,0,0) issue mentioned above turned out to be a missing
-        # sched.reset() before reading counts, not a fundamental problem
-        # with the API — so we now prefer it and only fall back to the raw
-        # SQL if the scheduler call itself fails.
+        # deck_due_tree() is the API that actually backs Anki's own deck-
+        # list numbers: it walks every deck simultaneously and returns a
+        # tree whose ROOT node already carries the full collection
+        # aggregate directly (root.new_count / .learn_count / .review_count
+        # -- no manual per-deck summing needed). Verified against a real
+        # Collection:
+        #   - selection-independent: selecting Deck A vs Deck B before
+        #     calling it produces an identical collection total, and the
+        #     currently selected deck is provably unchanged before/after
+        #     the call (it never touches col.decks.selected()).
+        #   - still deck-limit-aware: a deck with 30 due reviews and a
+        #     perDay=5 limit still contributes only 5 to the total here,
+        #     identical to what sched.counts() enforces for a single deck
+        #     -- so the "respect each deck's daily limits" guarantee this
+        #     block has always provided is preserved, just applied
+        #     collection-wide instead of to one deck.
+        #   - filtered/cram decks are included without double-counting:
+        #     a card pulled into a filtered deck drops out of its source
+        #     deck's own count, so summing every deck (filtered or not)
+        #     matches exactly what a user's own deck list adds up to.
+        #   - fully self-contained: no sched.reset() call is needed first.
+        #
+        # The raw-SQL fallback below is unchanged and only runs if the
+        # scheduler call itself raises.
         _due_today_count: int = 0
         try:
             from aqt import mw as _mw
             if _mw and _mw.col:
                 try:
-                    _mw.col.sched.reset()
-                    _new_c, _lrn_c, _rev_c = _mw.col.sched.counts()
-                    _due_today_count = int(_new_c) + int(_lrn_c) + int(_rev_c)
+                    _tree = _mw.col.sched.deck_due_tree()
+                    _due_today_count = (
+                        int(_tree.new_count) + int(_tree.learn_count) + int(_tree.review_count)
+                    )
                 except Exception:
                     import time as _t2
                     try:

@@ -308,7 +308,22 @@ class FatigueTracker:
         return sum(1 for a in review if a.ease == 1) / len(review)
 
     def reset(self) -> None:
-        self.on_break_taken()
+        """Full state clear -- distinct from on_break_taken().
+
+        on_break_taken() deliberately RETAINS and blends a subset of recent
+        answers (continuity within the same session across a break) -- that
+        is correct for its purpose but wrong here. This is used specifically
+        when the previous Anki profile's data must have zero influence on
+        the next (a profile switch), so it clears _answers completely
+        rather than retaining any of it. Does not touch on_break_taken()'s
+        own behaviour or any of its callers -- reset() has no callers
+        besides the profile-switch cleanup in __init__.py.
+        """
+        self._answers.clear()
+        self._card_started_at.clear()
+        self.current_score = 1.0
+        self.current_state = "focused"
+        self._consecutive_low = 0
 
     def current_snapshot(self) -> FatigueSnapshot:
         return self._compute()

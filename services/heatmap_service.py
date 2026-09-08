@@ -367,52 +367,62 @@ class HeatmapService:
                 )
 
             # For today only: count remaining due cards so the heatmap can show
-            # "X still due today".  sched.counts() returns (0,0,0) outside a
-            # review session in Anki 25.x (v3 scheduler), so we use direct SQL
-            # queries for reviews and learning cards — these are always accurate
-            # regardless of context — and fall back to sched.counts() for new
-            # cards only (where daily-limit logic makes SQL unreliable).
+            # "X still due today", split into review / learning / new. This
+            # feeds the heatmap's today-cell hover tooltip, the day-detail
+            # popup, AND (via HeatmapDay.due_cards/rev_due/lrn_due/new_due)
+            # the Daily Status breakdown text in heatmap_widget.py.
+            #
+            # COLLECTION-WIDE FIX (1.0.38): this used to mix two different
+            # scopes — rev_due/lrn_due via collection-wide raw SQL, but
+            # new_due via sched.counts(), which only reflects whichever deck
+            # is currently "selected" (col.decks.selected()), i.e. whatever
+            # deck the user most recently studied or clicked into. That let
+            # this breakdown disagree with the Daily Status total shown
+            # right next to it (see the matching fix in build_heatmap_html()
+            # in heatmap_widget.py) — e.g. a "new" figure scoped to one deck
+            # sitting beside review/learning figures scoped to the whole
+            # collection, not even summing to the number displayed.
+            #
+            # All three components now come from the same source as that
+            # fix: mw.col.sched.deck_due_tree(), read directly off its root
+            # node (root.review_count / .learn_count / .new_count). This is
+            # collection-wide, still respects every deck's own daily
+            # limits, never touches col.decks.selected() or any other
+            # scheduler/UI state, and needs no prior sched.reset() call —
+            # so rev_due + lrn_due + new_due is now guaranteed to sum to
+            # exactly the figure the Daily Status line shows.
             _day_new_due = _day_lrn_due = _day_rev_due = 0
             if day == today and mw is not None and mw.col is not None:
                 try:
-                    import time as _t
-                    _today_ord = mw.col.sched.today
-                    _now_ts    = int(_t.time())
-
-                    # Review cards due today or overdue (queue=2, due=ordinal day)
-                    _day_rev_due = int(mw.col.db.scalar(
-                        "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
-                        _today_ord) or 0)
-
-                    # Learning cards:
-                    #   queue=1 (intraday)   — due is a unix timestamp
-                    #   queue=3 (day-learn)  — due is an ordinal day
-                    _day_lrn_due = int(mw.col.db.scalar(
-                        "SELECT count() FROM cards "
-                        "WHERE (queue = 1 AND due <= ?) "
-                        "   OR (queue = 3 AND due <= ?)",
-                        _now_ts, _today_ord) or 0)
-
-                    # New cards: try sched.counts() first (respects daily limits
-                    # and is accurate within a study session).  Outside a session
-                    # the v3 scheduler returns (0,0,0), so we fall back to a direct
-                    # queue=0 SQL count — consistent with find_cards("is:new") used
-                    # in the toolbar due-count (coordinator.py).
                     try:
-                        _cnt = mw.col.sched.counts()
-                        _day_new_due = int(_cnt[0]) if _cnt and sum(_cnt) > 0 else 0
+                        _tree = mw.col.sched.deck_due_tree()
+                        _day_rev_due = int(_tree.review_count)
+                        _day_lrn_due = int(_tree.learn_count)
+                        _day_new_due = int(_tree.new_count)
                     except Exception:
-                        _day_new_due = 0
-                    if _day_new_due == 0:
+                        # Fallback: collection-wide raw SQL — deck-limit-
+                        # unaware, but far more useful than zeros if the
+                        # scheduler call itself is unavailable. Mirrors the
+                        # pre-1.0.38 review/learning queries, plus an
+                        # unlimited new-card count for the same trade-off
+                        # build_heatmap_html()'s own fallback already accepts.
+                        import time as _t
                         try:
-                            # Fallback: direct count of all cards in the new queue.
-                            # May slightly exceed the daily new-card limit for large
-                            # decks, but matches what find_cards("is:new") returns
-                            # and is far more accurate than showing zero.
-                            _day_new_due = int(mw.col.db.scalar(
-                                "SELECT count() FROM cards WHERE queue = 0") or 0)
+                            _today_ord = mw.col.sched.today
                         except Exception:
-                            _day_new_due = 0
+                            from datetime import date as _date_fb
+                            _today_ord = (_date_fb.today() - _date_fb(2006, 1, 1)).days
+                        _now_ts = int(_t.time())
+                        _day_rev_due = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
+                            _today_ord) or 0)
+                        _day_lrn_due = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards "
+                            "WHERE (queue = 1 AND due <= ?) "
+                            "   OR (queue = 3 AND due <= ?)",
+                            _now_ts, _today_ord) or 0)
+                        _day_new_due = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards WHERE queue = 0") or 0)
                 except Exception:
                     pass
 

@@ -313,6 +313,15 @@ def _on_profile_will_close() -> None:
         )
     if _timer_mgr:
         _timer_mgr.stop_idle()
+    if _fatigue:
+        # Clear the rolling answer-history/baseline/persistence-counter state
+        # before this profile's data stops being relevant, so the next
+        # profile to open (which may be a different person's collection)
+        # never scores its first few cards against a stranger's response
+        # times. Uses the existing reset() -- no new fatigue mechanism, no
+        # change to the scoring formulas or the 3-consecutive persistence
+        # behaviour itself, just clearing the state it's evaluated against.
+        _fatigue.reset()
 
 
 # ── main window ───────────────────────────────────────────────────────────────
