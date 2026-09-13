@@ -371,18 +371,8 @@ def _cell_rect(d: HeatmapDay, x: int, y: int, cell: int, fill: str,
         f'<{_tag} class="ff-cell{tc}" {_shape_attrs} fill="{fill}" '
         f'{mode_attrs} data-json="{esc}" '
         f'data-week="{week_key}" data-month="{month_key}" '
-        f'style="cursor:pointer;stroke:rgba(120,114,107,0.32);stroke-width:0.6"/>'
-    )
-    # Subtle glossy sheen: a light-to-dark diagonal overlay reusing one
-    # shared gradient (ff-cell-sheen, defined once in _DEFS) so every cell
-    # gets a soft "raised card" highlight without needing a per-colour
-    # gradient definition. Non-interactive so it never intercepts clicks.
-    # Grouped with the base cell in <g class="ff-cell-wrap"> so hover's
-    # scale/lift animates both together — otherwise the sheen stayed put
-    # while the coloured cell scaled up, leaving it visibly misaligned.
-    rect += (
-        f'<{_tag} {_shape_attrs} '
-        f'fill="url(#ff-cell-sheen)" pointer-events="none"/></g>'
+        f'style="cursor:pointer;stroke:var(--border,rgba(120,114,107,0.32));stroke-width:0.6"/>'
+        f'</g>'
     )
     inner = f'<title>{tip}</title>' + rect
 
@@ -1143,9 +1133,8 @@ _CSS = """<style>
   border:1px solid var(--border,rgba(40,40,40,0.2));
   border-radius:4px;padding:1px 5px;cursor:pointer;
   color:var(--text-fg,#222);font-family:inherit}
-.ff-cell-wrap{transition:transform .12s ease;transform-box:fill-box;transform-origin:center}
-.ff-cell-wrap:hover{transform:scale(1.12)}
-.ff-cell-wrap:hover .ff-cell{filter:brightness(1.12) drop-shadow(0 1px 2px rgba(0,0,0,0.35))}
+.ff-cell-wrap .ff-cell{transition:stroke-width .12s ease,stroke-opacity .12s ease}
+.ff-cell-wrap:hover .ff-cell{stroke-width:1.2!important;stroke-opacity:0.7}
 .ff-week{transition:opacity .1s;cursor:pointer}
 .ff-week:hover{opacity:.5}
 .ff-month{transition:opacity .1s;cursor:pointer}
@@ -1153,6 +1142,7 @@ _CSS = """<style>
 .ff-today-ring{animation:ff-today-pulse 2.4s ease-in-out infinite;
   filter:drop-shadow(0 0 3px var(--accent-glow, rgba(90,169,255,.85)))}
 @keyframes ff-today-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+@media (prefers-reduced-motion: reduce){.ff-today-ring{animation:none}}
 #ff-detail{display:none;margin:8px auto 4px;max-width:700px;
   font-family:var(--font-family,system-ui,sans-serif);
   font-size:var(--base-font-size,12px)}
@@ -1217,11 +1207,6 @@ _DEFS = """<defs>
     <path d="M-1,1 l2,-2 M0,5 l5,-5 M4,6 l2,-2"
       stroke="rgba(100,125,175,0.22)" stroke-width="0.9"/>
   </pattern>
-  <linearGradient id="ff-cell-sheen" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0%" stop-color="#ffffff" stop-opacity="0.20"/>
-    <stop offset="40%" stop-color="#ffffff" stop-opacity="0.05"/>
-    <stop offset="100%" stop-color="#000000" stop-opacity="0.10"/>
-  </linearGradient>
 </defs>"""
 
 _LEGEND = (
@@ -1293,8 +1278,17 @@ _JS_INTERACT = """<script>
   // registered here through the same ffWireCardClick() call below.
   window._ffClickableStats = [
     {id: "ff-m-new",            kind: "new"},
-    {id: "ff-m-cards",          kind: "reviewed"},
-    {id: "ff-m-cards-reviewed", kind: "cards_reviewed"},
+    // 1.0.47: optional "tip" explains what this specific figure counts,
+    // for stats similarly-named enough to be mistaken for each other (see
+    // the same wording already used for the Tools-menu stats table and
+    // day-detail popup in 1.0.46). Combined with the click hint below
+    // rather than replacing it -- both survive. Absent for stats that
+    // don't need it (e.g. "New cards" above), which keeps their existing
+    // "Open in Browser"-only tooltip unchanged.
+    {id: "ff-m-cards",          kind: "reviewed",
+     tip: "All study activity, including new, learning, review, and relearning cards."},
+    {id: "ff-m-cards-reviewed", kind: "cards_reviewed",
+     tip: "Review and relearning cards only; new-card activity is excluded."},
   ];
 
   // Wires (or clears) click-to-browse on every registered stat card above.
@@ -1313,7 +1307,7 @@ _JS_INTERACT = """<script>
       var target = card || val;
       if(startISO && endISO){
         target.classList.add("ff-mcard-click");
-        target.setAttribute("title", "Open in Browser");
+        target.setAttribute("title", stat.tip ? (stat.tip + " Click to open in Browser.") : "Open in Browser");
         target.onclick = function(e){
           e.stopPropagation();
           window.ffBrowseStat(stat.kind, startISO, endISO);
@@ -1555,7 +1549,7 @@ _JS_INTERACT = """<script>
         _todayRingEl.setAttribute('stroke', _ringHome.stroke);
       } else {
         // Fallback-path cell (see _selStyle) — clear its static outline.
-        el.setAttribute('stroke','rgba(120,114,107,0.32)');
+        el.setAttribute('stroke','var(--border, rgba(120,114,107,0.32))');
         el.setAttribute('stroke-width','0.6');
       }
     } else {
@@ -1568,7 +1562,7 @@ _JS_INTERACT = """<script>
         var cells = document.querySelectorAll(
           '.ff-cell[' + attr + '="' + key + '"]');
         for(var i=0;i<cells.length;i++){
-          cells[i].setAttribute('stroke','rgba(120,114,107,0.32)');
+          cells[i].setAttribute('stroke','var(--border, rgba(120,114,107,0.32))');
           cells[i].setAttribute('stroke-width','0.6');
         }
       }
@@ -1896,9 +1890,19 @@ def _build_stats_html(
     # Always show "due today" — colour signals urgency, green when nothing left.
     _today_col = ("#b05c00" if td_due >= 50 else
                   "#5a6e8a" if td_due >= 15 else "#2e7a40")
+    # SCOPE CLARIFICATION (1.0.40): this number (and the "remaining"/"due
+    # tomorrow" line below) is collection-wide (see the deck_due_tree()
+    # comment above), while Anki's own deck list directly above it is
+    # scoped to the selected deck. A plain hover tooltip — same mechanism
+    # already used a few lines below for the attention indicator — makes
+    # that distinction discoverable without adding any visible text, icon,
+    # or layout change.
+    _scope_tip = "Counts cards across your whole collection, not just the deck selected above."
     tomorrow_inline = (
+        f'<span title="{_scope_tip}">'
         f'<span style="font-weight:600;color:{_today_col}">{td_due}</span>'
         f'&#x202F;<span>cards due today</span>'
+        f'</span>'
     )
 
     # Again-rate attention strip — rendered inline on the streak row when
@@ -2125,21 +2129,25 @@ def _build_stats_html(
     if show_progress and (_td_studied > 0 or td_due > 0 or td_due_tomorrow > 0):
         if td_due > 0:
             _status_line = (
+                f'<span title="{_scope_tip}">'
                 f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
                 f'&#x202F;<span>studied</span>'
                 f'&#x2009;&middot;&#x2009;'
                 f'<span style="font-weight:600;color:{_today_col}">{td_due}</span>'
                 f'&#x202F;<span>remaining</span>'
+                f'</span>'
             )
         elif td_due_tomorrow > 0:
             _tomorrow_col = ("#b05c00" if td_due_tomorrow >= 50 else
                               "#5a6e8a" if td_due_tomorrow >= 15 else "#2e7a40")
             _status_line = (
+                f'<span title="{_scope_tip}">'
                 f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
                 f'&#x202F;<span>studied</span>'
                 f'&#x2009;&middot;&#x2009;'
                 f'<span style="font-weight:600;color:{_tomorrow_col}">{td_due_tomorrow}</span>'
                 f'&#x202F;<span>due tomorrow</span>'
+                f'</span>'
             )
         else:
             # td_due == 0 and td_due_tomorrow == 0 — the gate above
@@ -2151,10 +2159,12 @@ def _build_stats_html(
             # numeric branches above rather than introducing a separate
             # hardcoded colour.
             _status_line = (
+                f'<span title="{_scope_tip}">'
                 f'<span style="font-weight:600;color:{_resolved_fg}">{_td_studied}</span>'
                 f'&#x202F;<span>studied</span>'
                 f'&#x2009;&middot;&#x2009;'
                 f'<span style="font-weight:600;color:{_today_col}">No cards due tomorrow</span>'
+                f'</span>'
             )
         progress_html = (
             f'<div style="margin:6px auto {"24px" if comfortable_sp else "10px"};max-width:700px;'
@@ -2441,8 +2451,19 @@ class HeatmapDialog(QDialog):
         self.stats_grid = QGridLayout(sg)
         self._stat_labels: dict[tuple, QLabel] = {}
         headers = ("Period", "Study time", "Effective", "Study Quality", "Sessions", "New", "Reviews", "Cards Reviewed")
+        # 1.0.46: "Reviews" and "Cards Reviewed" read as near-synonyms but
+        # count different things -- see raw_study_events() and
+        # HeatmapDay.cards_reviewed's docstrings in heatmap_service.py for
+        # the full rationale. Numbers themselves are unchanged; this only
+        # clarifies what each already-correct figure means.
+        _header_tips = {
+            "Reviews": "All study activity, including new, learning, review, and relearning cards.",
+            "Cards Reviewed": "Review and relearning cards only; new-card activity is excluded.",
+        }
         for col, h in enumerate(headers):
             lbl = QLabel(h); lbl.setStyleSheet("font-weight:600;")
+            if h in _header_tips:
+                lbl.setToolTip(_header_tips[h])
             self.stats_grid.addWidget(lbl, 0, col)
         for row in range(1, 6):
             for col in range(len(headers)):
@@ -2538,8 +2559,8 @@ def _year_svg_block(yr: int, days: list[HeatmapDay], cell: int, lo: tuple, hi: t
     render_single_year_svg(). Does NOT bundle its own copy of _DEFS: that
     lives once, permanently, in build_heatmap_html()'s nav_html (see the
     BUG FIX note there) so every year's cells — eager or lazily fetched —
-    share the exact same ff-cell-sheen definition instead of the DOM
-    accumulating one duplicate id="ff-cell-sheen" per year visited."""
+    share the exact same shared gradient/pattern defs instead of the DOM
+    accumulating duplicate def ids per year visited."""
     inner, w, h = _render_year(days, cell, lo, hi, heavy_cards, light_cards, grouping, disp_cfg)
     w = width if width is not None else w
     h = height if height is not None else h
@@ -2586,6 +2607,7 @@ def build_heatmap_html(
     longest_streak: int = 0,
     color_mode: str = "reviews",
     night_mode: bool = False,
+    today_due_counts: tuple[int, int, int] | None = None,
 ) -> str:
     if not days_by_year:
         return ""
@@ -2627,13 +2649,13 @@ def build_heatmap_html(
             + inner + '</svg>\n'
         )
 
-    # BUG FIX: _DEFS (the ff-cell-sheen gradient every cell's gloss overlay
-    # references via url(#ff-cell-sheen)) used to be embedded once per
+    # BUG FIX: _DEFS (the shared gradient/pattern defs, such as ff-hatch,
+    # that cell markup references via url(#...)) used to be embedded once per
     # per-year <svg> block above, and again in _year_svg_block() for every
     # lazily-fetched year (see render_single_year_svg()). id attributes are
     # unique per *document*, not per <svg> root, so the moment a second year
-    # got fetched, the DOM held two elements with id="ff-cell-sheen" — every
-    # existing url(#ff-cell-sheen) reference (including the already-visible
+    # got fetched, the DOM held two elements with the same def id — every
+    # existing url(#...) reference (including the already-visible
     # current year's, since ffApplyColorMode's querySelectorAll runs across
     # the whole document) then resolves against whichever one the engine
     # picks, which is order-dependent and shifts every time a year is
@@ -2851,33 +2873,59 @@ def build_heatmap_html(
         #
         # The raw-SQL fallback below is unchanged and only runs if the
         # scheduler call itself raises.
+        #
+        # PERFORMANCE FIX (1.0.49): today_due_counts, when supplied, is the
+        # render's single already-computed deck_due_tree() result (see
+        # _on_deck_browser_render() in __init__.py) -- reused here instead
+        # of calling deck_due_tree() a second (in fact third, counting
+        # days_for_year()'s own call) time this render for an identical
+        # collection-wide value. It is only ever passed when that call
+        # already succeeded, so this is exactly the value the primary path
+        # below would have computed itself. None (the default) preserves
+        # the original primary-call + fallback behavior unchanged.
         _due_today_count: int = 0
-        try:
-            from aqt import mw as _mw
-            if _mw and _mw.col:
-                try:
-                    _tree = _mw.col.sched.deck_due_tree()
-                    _due_today_count = (
-                        int(_tree.new_count) + int(_tree.learn_count) + int(_tree.review_count)
-                    )
-                except Exception:
-                    import time as _t2
+        if today_due_counts is not None:
+            _due_today_count = int(today_due_counts[0]) + int(today_due_counts[1]) + int(today_due_counts[2])
+        else:
+            try:
+                from aqt import mw as _mw
+                if _mw and _mw.col:
                     try:
-                        _tod = int(_mw.col.sched.today)
+                        _tree = _mw.col.sched.deck_due_tree()
+                        _due_today_count = (
+                            int(_tree.new_count) + int(_tree.learn_count) + int(_tree.review_count)
+                        )
                     except Exception:
-                        from datetime import date as _date_fb
-                        _tod = (_date_fb.today() - _date_fb(2006, 1, 1)).days
-                    _nw = int(_t2.time())
-                    _due_today_count = int(_mw.col.db.scalar(
-                        "SELECT count() FROM cards "
-                        "WHERE (queue = 0) "
-                        "   OR (queue = 2 AND due <= ?) "
-                        "   OR (queue = 3 AND due <= ?) "
-                        "   OR (queue = 1 AND due <= ?)",
-                        _tod, _tod, _nw,
-                    ) or 0)
-        except Exception:
-            pass
+                        import time as _t2
+                        try:
+                            _tod = int(_mw.col.sched.today)
+                        except Exception:
+                            from datetime import date as _date_fb
+                            _tod = (_date_fb.today() - _date_fb(2006, 1, 1)).days
+                        _nw = int(_t2.time())
+                        # 1.0.42 FIX: the primary deck_due_tree() path counts an
+                        # intraday learning card as due as soon as it falls
+                        # inside Anki's own collection-wide learn-ahead window
+                        # (collapseTime, default 1200s / 20min) — not only once
+                        # its due timestamp has strictly passed. This fallback
+                        # only ran the bare `due <= now` comparison, silently
+                        # under-counting such cards whenever the primary call
+                        # itself was failing. Reading the same collapseTime the
+                        # scheduler already uses (not reimplementing scheduler
+                        # logic) closes that gap. queue=3 (day-learning/
+                        # relearning, day-ordinal due) is untouched — confirmed
+                        # already unaffected by learn-ahead.
+                        _collapse = int(_mw.col.get_config("collapseTime", 1200) or 1200)
+                        _due_today_count = int(_mw.col.db.scalar(
+                            "SELECT count() FROM cards "
+                            "WHERE (queue = 0) "
+                            "   OR (queue = 2 AND due <= ?) "
+                            "   OR (queue = 3 AND due <= ?) "
+                            "   OR (queue = 1 AND due <= ?)",
+                            _tod, _tod, _nw + _collapse,
+                        ) or 0)
+            except Exception:
+                pass
 
         # ── Cards due tomorrow (for the Daily Status line) ──────────────────
         # Deliberately NOT reusing _future_due_counts() (services/heatmap_
@@ -3003,9 +3051,16 @@ window._ffPopupAutoCloseSecs = {int(disp_cfg.get("popup_auto_close_secs", 0) or 
     // BUG FIX: this used a truthy check (if(d.cards)), so a legitimate
     // value of exactly 0 silently hid the whole row — unlike "New cards"
     // just above, which already used the correct explicit check.
-    if(d.cards !== undefined && d.cards !== null) rows.push(["Reviews", d.cards, "reviewed"]);
+    // 1.0.46: 4th element is an explanatory tooltip -- "Reviews" and
+    // "Cards Reviewed" read as near-synonyms but count different things
+    // (see raw_study_events() / HeatmapDay.cards_reviewed in
+    // heatmap_service.py). Numbers unchanged; only the tooltip is new.
+    if(d.cards !== undefined && d.cards !== null)
+      rows.push(["Reviews", d.cards, "reviewed",
+                 "All study activity, including new, learning, review, and relearning cards."]);
     if(d.cards_reviewed !== undefined && d.cards_reviewed !== null)
-      rows.push(["Cards Reviewed", d.cards_reviewed, "cards_reviewed"]);
+      rows.push(["Cards Reviewed", d.cards_reviewed, "cards_reviewed",
+                 "Review and relearning cards only; new-card activity is excluded."]);
     if(d.revtime) rows.push(["Review time", d.revtime]);
     if(d.is_today && d.due > 0 && typeof _buildDueStr === "function")
       rows.push(["Still due", _buildDueStr(d)]);
@@ -3025,8 +3080,17 @@ window._ffPopupAutoCloseSecs = {int(disp_cfg.get("popup_auto_close_secs", 0) or 
         // of pre-wired, since popup rows are rebuilt fresh every time.
         var kind = r[2];
         var cls  = kind ? ' class="ff-popup-row ff-popup-row-click"' : ' class="ff-popup-row"';
-        var act  = kind ? " onclick='ffBrowseStat(\\"" + kind + "\\",\\"" + d.start + "\\",\\"" + d.end + "\\")' title=\\"Open in Browser\\"" : "";
-        return '<div' + cls + act + '><span class="ff-popup-lbl">'+r[0]+'</span>'
+        // 1.0.46: r[3], when present, is a short explanation of what this
+        // specific metric counts (currently only "Reviews"/"Cards
+        // Reviewed"). Combined with the existing "Open in Browser" click
+        // hint rather than replacing it, so clickable rows keep both.
+        var tipParts = [];
+        if(r[3]) tipParts.push(r[3]);
+        if(kind) tipParts.push("Click to open in Browser.");
+        var tip  = tipParts.join(" ");
+        var act  = kind ? " onclick='ffBrowseStat(\\"" + kind + "\\",\\"" + d.start + "\\",\\"" + d.end + "\\")'" : "";
+        var tipAttr = tip ? " title=\\"" + tip + "\\"" : "";
+        return '<div' + cls + act + tipAttr + '><span class="ff-popup-lbl">'+r[0]+'</span>'
              + '<span class="ff-popup-val">'+r[1]+'</span></div>';
       }}).join("");
       // Show the note at the bottom, one click away, instead of requiring

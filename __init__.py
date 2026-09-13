@@ -390,7 +390,8 @@ def _build_days_by_year(past_years: int = 2,
                         measurement: dict | None = None,
                         end_conditions: dict | None = None,
                         full_history: bool = False,
-                        due_forecast_days: int = 30) -> dict[int, list]:
+                        due_forecast_days: int = 30,
+                        today_due_counts: tuple[int, int, int] | None = None) -> dict[int, list]:
     if _heatmap_svc is None:
         return {}
     today    = scheduler_today(_get_day_cutoff())
@@ -466,6 +467,14 @@ def _build_days_by_year(past_years: int = 2,
                 future_count=due_forecast_days,
                 measurement=measurement,
                 end_conditions=end_conditions,
+                # PERFORMANCE FIX (1.0.49): reuse the render's single
+                # deck_due_tree() call (see _on_deck_browser_render below)
+                # instead of days_for_year() making its own. None here
+                # (this function's own default) preserves days_for_year()'s
+                # exact original behavior -- unaffected for its other
+                # caller, the lazy "ff_get_year:" handler, which calls
+                # days_for_year() directly and never passes this.
+                today_due_counts=today_due_counts,
             )
         except Exception as exc:
             log.warning("days_for_year(%d) failed: %s", yr, exc)
@@ -841,10 +850,58 @@ def _on_webview_message(
     return (True, None)
 
 
+def _today_due_tree_counts() -> "tuple[int, int, int] | None":
+    """Collection-wide (new, learn, review) due counts for today via
+    mw.col.sched.deck_due_tree() -- the same primary scheduler call that,
+    up to 1.0.48, was independently made once each by HeatmapService.days(),
+    HeatmapService.days_for_year(), and build_heatmap_html() (three calls
+    per render for one identical collection-wide value).
+
+    PERFORMANCE FIX (1.0.49): computed once here per render and threaded
+    through to all three via their new today_due_counts parameter. Returns
+    None on any failure (mirroring each site's own primary-call try/except),
+    so every one of those call sites falls back to its own existing,
+    unchanged per-site fallback logic exactly as before -- this helper
+    deliberately does not reimplement any of those fallbacks itself.
+    """
+    try:
+        if mw is None or mw.col is None:
+            return None
+        tree = mw.col.sched.deck_due_tree()
+        return (int(tree.new_count), int(tree.learn_count), int(tree.review_count))
+    except Exception:
+        return None
+
+
 def _on_deck_browser_render(deck_browser, content) -> None:
     if _heatmap_svc is None:
         return
     try:
+        # BUG FIX ("multi calendar" / duplicated panel): this hook can
+        # fire more than once for the same DeckBrowserContent object —
+        # e.g. several refreshes stacking up in quick succession during
+        # an active timer session. Since we mutate content.stats with
+        # "+=" further down, firing twice silently doubled the entire
+        # panel, including the calendar grid, producing two stacked
+        # heatmaps. Guard against re-appending onto a content.stats that
+        # already has our block in it.
+        #
+        # PERFORMANCE FIX (1.0.49): this guard used to sit right before
+        # the content.stats mutation, at the very end of this function —
+        # so a duplicate fire for the same content object still paid the
+        # full cost of _build_days_by_year(), stats(), all_year_stats(),
+        # days(365), goal_streak(), and build_heatmap_html() before being
+        # discarded there. Checking it here, before any of that work
+        # runs, produces the exact same outcome (a duplicate fire still
+        # makes no visible change to content.stats) while skipping the
+        # now-provably-wasted computation. Condition and behavior are
+        # unchanged — only its position moved.
+        if 'id="ff-heatmap"' in content.stats:
+            return
+        # PERFORMANCE FIX (1.0.49): see _today_due_tree_counts() docstring.
+        # None on failure -- every downstream call below already has its
+        # own unchanged fallback for exactly that case.
+        _today_due = _today_due_tree_counts()
         hm_cfg, _meas_cfg = _year_render_config()
         end_conditions = _config_mgr.data.get("end_conditions", {}) if _config_mgr else {}
         days_by_year = _build_days_by_year(
@@ -852,6 +909,7 @@ def _on_deck_browser_render(deck_browser, content) -> None:
             end_conditions=end_conditions,
             full_history=bool(hm_cfg.get("heatmap_full_history", False)),
             due_forecast_days=_due_forecast_window(hm_cfg),
+            today_due_counts=_today_due,
         )
         period_stats = year_stats = None
         cur_streak = lng_streak = 0
@@ -865,7 +923,8 @@ def _on_deck_browser_render(deck_browser, content) -> None:
         try:
             ec       = end_conditions
             all_days = _heatmap_svc.days(
-                past_count=365, future_count=0, end_conditions=ec
+                past_count=365, future_count=0, end_conditions=ec,
+                today_due_counts=_today_due,
             )
             cur_streak, lng_streak = _compute_streaks(all_days)
             goal_cs, goal_ls       = _heatmap_svc.goal_streak(ec)
@@ -895,18 +954,13 @@ def _on_deck_browser_render(deck_browser, content) -> None:
             longest_streak=lng_streak,
             color_mode=hm_cfg.get("color_mode", "reviews"),
             night_mode=_night,
+            today_due_counts=_today_due,
         )
         if html:
-            # BUG FIX ("multi calendar" / duplicated panel): this hook can
-            # fire more than once for the same DeckBrowserContent object —
-            # e.g. several refreshes stacking up in quick succession during
-            # an active timer session. Since we mutate content.stats with
-            # "+=" below, firing twice silently doubled the entire panel,
-            # including the calendar grid, producing two stacked heatmaps.
-            # Guard against re-appending onto a content.stats that already
-            # has our block in it.
-            if 'id="ff-heatmap"' in content.stats:
-                return
+            # Duplicate-render guard now lives at the top of this function
+            # (see PERFORMANCE FIX comment there) — checked before any of
+            # the work above runs, instead of after all of it, but still
+            # the same condition applied before content.stats is mutated.
             _hide_native_stats = bool(hm_cfg.get("hide_native_stats_line", False))
             if _hide_native_stats:
                 content.stats = html

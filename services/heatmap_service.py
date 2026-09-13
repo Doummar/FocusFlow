@@ -316,7 +316,15 @@ class HeatmapService:
             return set()
 
     def days(self, past_count: int = 365, future_count: int = 30,
-             end_conditions: dict | None = None) -> list[HeatmapDay]:
+             end_conditions: dict | None = None,
+             today_due_counts: tuple[int, int, int] | None = None) -> list[HeatmapDay]:
+        """today_due_counts: optional pre-computed (new, learn, review) counts
+        for today from mw.col.sched.deck_due_tree(), so a caller that has
+        already made that call this render (see _on_deck_browser_render() in
+        __init__.py) doesn't force this method to make it again. None (the
+        default) preserves the exact original behavior of computing it here,
+        via the same primary call + fallback below -- unchanged for any
+        caller that doesn't pass it."""
         day_cutoff = _get_day_cutoff()
         today     = scheduler_today(day_cutoff)
         start_day = today - timedelta(days=past_count - 1)
@@ -325,7 +333,16 @@ class HeatmapService:
         start_ts //= 1000
         end_ts //= 1000
 
-        sessions = self.repo.sessions_between(start_ts, end_ts)
+        # PERFORMANCE FIX (1.0.49): was self.repo.sessions_between(...), a
+        # fresh SessionRepo connection + query. All_sessions is already
+        # loaded and cached for this same render by stats()/goal_streak()
+        # (see _get_all_sessions()) -- filtering it in Python instead
+        # preserves the exact same start_ts <= start_time < end_ts,
+        # ordered-by-start_time semantics sessions_between() provided
+        # (all_sessions() is itself ORDER BY start_time), without a second
+        # DB round trip for data already in memory.
+        all_sessions = self._get_all_sessions()
+        sessions = [s for s in all_sessions if start_ts <= s.start_time < end_ts]
         session_buckets: dict[date, list] = {}
         for s in sessions:
             d = study_day_from_revlog_id(int(s.start_time) * 1000, day_cutoff)
@@ -393,38 +410,55 @@ class HeatmapService:
             # exactly the figure the Daily Status line shows.
             _day_new_due = _day_lrn_due = _day_rev_due = 0
             if day == today and mw is not None and mw.col is not None:
-                try:
+                # PERFORMANCE FIX (1.0.49): if the caller already computed
+                # today's deck_due_tree() counts this render (see
+                # today_due_counts above), reuse them instead of calling
+                # deck_due_tree() again for an identical collection-wide
+                # result. When today_due_counts is None (its default, and
+                # what every pre-1.0.49 caller effectively passed), this
+                # falls through to the exact original primary-call +
+                # fallback logic below, unchanged.
+                if today_due_counts is not None:
+                    _day_new_due, _day_lrn_due, _day_rev_due = today_due_counts
+                else:
                     try:
-                        _tree = mw.col.sched.deck_due_tree()
-                        _day_rev_due = int(_tree.review_count)
-                        _day_lrn_due = int(_tree.learn_count)
-                        _day_new_due = int(_tree.new_count)
-                    except Exception:
-                        # Fallback: collection-wide raw SQL — deck-limit-
-                        # unaware, but far more useful than zeros if the
-                        # scheduler call itself is unavailable. Mirrors the
-                        # pre-1.0.38 review/learning queries, plus an
-                        # unlimited new-card count for the same trade-off
-                        # build_heatmap_html()'s own fallback already accepts.
-                        import time as _t
                         try:
-                            _today_ord = mw.col.sched.today
+                            _tree = mw.col.sched.deck_due_tree()
+                            _day_rev_due = int(_tree.review_count)
+                            _day_lrn_due = int(_tree.learn_count)
+                            _day_new_due = int(_tree.new_count)
                         except Exception:
-                            from datetime import date as _date_fb
-                            _today_ord = (_date_fb.today() - _date_fb(2006, 1, 1)).days
-                        _now_ts = int(_t.time())
-                        _day_rev_due = int(mw.col.db.scalar(
-                            "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
-                            _today_ord) or 0)
-                        _day_lrn_due = int(mw.col.db.scalar(
-                            "SELECT count() FROM cards "
-                            "WHERE (queue = 1 AND due <= ?) "
-                            "   OR (queue = 3 AND due <= ?)",
-                            _now_ts, _today_ord) or 0)
-                        _day_new_due = int(mw.col.db.scalar(
-                            "SELECT count() FROM cards WHERE queue = 0") or 0)
-                except Exception:
-                    pass
+                            # Fallback: collection-wide raw SQL — deck-limit-
+                            # unaware, but far more useful than zeros if the
+                            # scheduler call itself is unavailable. Mirrors the
+                            # pre-1.0.38 review/learning queries, plus an
+                            # unlimited new-card count for the same trade-off
+                            # build_heatmap_html()'s own fallback already accepts.
+                            import time as _t
+                            try:
+                                _today_ord = mw.col.sched.today
+                            except Exception:
+                                from datetime import date as _date_fb
+                                _today_ord = (_date_fb.today() - _date_fb(2006, 1, 1)).days
+                            _now_ts = int(_t.time())
+                            # 1.0.42 FIX: match deck_due_tree()'s learn-ahead
+                            # window instead of a bare `due <= now` comparison —
+                            # see the identical fix/rationale in days_for_year()
+                            # below and in build_heatmap_html(). queue=3 (day-
+                            # ordinal) is untouched.
+                            _collapse = int(mw.col.get_config("collapseTime", 1200) or 1200)
+                            _day_rev_due = int(mw.col.db.scalar(
+                                "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
+                                _today_ord) or 0)
+                            _day_lrn_due = int(mw.col.db.scalar(
+                                "SELECT count() FROM cards "
+                                "WHERE (queue = 1 AND due <= ?) "
+                                "   OR (queue = 3 AND due <= ?)",
+                                _now_ts + _collapse, _today_ord) or 0)
+                            _day_new_due = int(mw.col.db.scalar(
+                                "SELECT count() FROM cards WHERE queue = 0") or 0)
+                    except Exception:
+                        pass
 
             past_days.append(HeatmapDay(
                     day=day, minutes=mins, effective_minutes=eff,
@@ -470,8 +504,33 @@ class HeatmapService:
         qsrc = meas.get("quality_source", "focus")
         cap  = int(meas.get("eff_time_cap_secs", 90))
 
+        # PERFORMANCE FIX (1.0.49): the 7 ranges below (Daily through
+        # All-time) heavily overlap -- All-time already spans every day any
+        # narrower range could ever need. _nc_rc_rt() used to call
+        # self._revlog_by_day(start, end) once per range: 7 DB round-trips
+        # plus 7 full Python re-aggregations over increasingly overlapping
+        # data, dominated by All-time re-scanning the entire revlog on every
+        # cold-cache call. _revlog_by_day() always buckets each revlog row
+        # into the single calendar/scheduler day it belongs to regardless of
+        # the query window queried -- a given day's aggregated entry is
+        # identical whether fetched alone or as part of a wider range -- so
+        # fetching the widest (All-time) range's per-day breakdown ONCE and
+        # deriving every narrower range from it via a plain date-range
+        # filter over that same dict is exact, not approximate: same per-day
+        # values, same summation math, only the data source changed.
+        #
+        # This intentionally does NOT touch _distinct_cards_reviewed() /
+        # _distinct_new_cards() / _distinct_cards_studied() below, which
+        # remain independent COUNT(DISTINCT ...) queries per range, one call
+        # each, unchanged -- distinct-card counts don't sum across days
+        # without double-counting a card studied on more than one day in a
+        # range, so they cannot be safely derived from the per-day dict the
+        # same way.
+        _all_time_start = datetime(2000, 1, 1).date()
+        _widest_rl = self._revlog_by_day(_all_time_start, today)
+
         def _nc_rc_rt(start: date, end: date) -> tuple[int, int, float, int]:
-            rl = self._revlog_by_day(start, end)
+            rl = {d: v for d, v in _widest_rl.items() if start <= d <= end}
             nc = sum(v.get("new_cards", 0) for v in rl.values())
             # Reviews total (displayed figure) = raw, undeduplicated types
             # 0+1+2+3 -- matches Anki's own LIVE studied_today() semantics via
@@ -843,9 +902,17 @@ class HeatmapService:
 
     def days_for_year(self, year: int, future_count: int = 30,
                      measurement: dict | None = None,
-                     end_conditions: dict | None = None) -> list[HeatmapDay]:
+                     end_conditions: dict | None = None,
+                     today_due_counts: tuple[int, int, int] | None = None) -> list[HeatmapDay]:
         """Return all days for a calendar year (Jan 1 – Dec 31).
-        If year is the current year, appends future_count forecast days."""
+        If year is the current year, appends future_count forecast days.
+
+        today_due_counts: optional pre-computed (new, learn, review) counts
+        for today from mw.col.sched.deck_due_tree() -- see the identical
+        parameter on days() above for why/when a caller would pass this.
+        None (the default) preserves the exact original behavior, which is
+        what the lazy "ff_get_year:" handler in __init__.py still relies on
+        by not passing it."""
         from datetime import date as _date, timedelta as _td
         day_cutoff = _get_day_cutoff()
         today = scheduler_today(day_cutoff)
@@ -860,7 +927,13 @@ class HeatmapService:
         _, end_ts   = day_bounds_ms(end_past, day_cutoff, today)
         start_ts //= 1000
         end_ts //= 1000
-        sessions = self.repo.sessions_between(start_ts, end_ts)
+        # PERFORMANCE FIX (1.0.49): was self.repo.sessions_between(...) --
+        # see the identical fix/rationale in days() above. Same exact
+        # start_ts <= start_time < end_ts, ordered-by-start_time semantics,
+        # now sourced from the already-cached _get_all_sessions() instead of
+        # a second SessionRepo connection.
+        all_sessions = self._get_all_sessions()
+        sessions = [s for s in all_sessions if start_ts <= s.start_time < end_ts]
         buckets: dict[_date, list] = {}
         for s in sessions:
             d = study_day_from_revlog_id(int(s.start_time) * 1000, day_cutoff)
@@ -915,50 +988,61 @@ class HeatmapService:
             # For today, compute remaining due cards (review + learning + new).
             # Past days always stay 0 — only today has a meaningful "remaining" count.
             #
-            # BUG FIX: this used to call mw.col.sched.reset() before
-            # sched.counts() to force an accurate read outside an active
-            # review session. reset() is a mutating scheduler call — it can
-            # reshuffle/reorder the live review queue, which is risky to
-            # trigger as a side effect of simply rendering the heatmap panel
-            # (e.g. a deck-browser refresh firing while a review session is
-            # already in progress). days() above solves the exact same
-            # "sched.counts() returns (0,0,0) outside a review session"
-            # problem via direct, non-mutating SQL for review/learning cards,
-            # falling back to sched.counts() only for new cards (which respects
-            # per-day limits and can't be gotten accurately any other way).
-            # Reuse that same approach here instead.
-            _due_today = 0
+            # FIX (1.0.39): today's HeatmapDay used to receive due_cards but
+            # never rev_due/lrn_due/new_due, so those three fields silently
+            # defaulted to 0 and the Daily Status breakdown text ("X review +
+            # Y learning + Z new") rendered blank on the actual deck-browser
+            # render path, even though due_cards itself was correct. This now
+            # mirrors the same deck_due_tree() pattern already shipped for
+            # days() and for the Daily Status headline in
+            # build_heatmap_html(): collection-wide, still respects every
+            # deck's own daily limits, selection-independent (never touches
+            # col.decks.selected()), and needs no prior sched.reset() call.
+            _due_new = _due_lrn = _due_rev = 0
             if current == today and mw and mw.col:
-                try:
-                    import time as _t
-                    _today_ord = mw.col.sched.today
-                    _now_ts    = int(_t.time())
-
-                    _rev_due = int(mw.col.db.scalar(
-                        "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
-                        _today_ord) or 0)
-
-                    _lrn_due = int(mw.col.db.scalar(
-                        "SELECT count() FROM cards "
-                        "WHERE (queue = 1 AND due <= ?) "
-                        "   OR (queue = 3 AND due <= ?)",
-                        _now_ts, _today_ord) or 0)
-
+                # PERFORMANCE FIX (1.0.49): reuse the caller's already-
+                # computed deck_due_tree() result for today when supplied
+                # (see today_due_counts above) instead of calling it again
+                # for an identical collection-wide result. None (default)
+                # falls through to the exact original primary-call +
+                # fallback logic below, unchanged -- this is what the lazy
+                # "ff_get_year:" handler still gets, since it never passes
+                # today_due_counts.
+                if today_due_counts is not None:
+                    _due_new, _due_lrn, _due_rev = today_due_counts
+                else:
                     try:
-                        _cnt = mw.col.sched.counts()
-                        _new_due = int(_cnt[0]) if _cnt and sum(_cnt) > 0 else 0
+                        _tree = mw.col.sched.deck_due_tree()
+                        _due_rev = int(_tree.review_count)
+                        _due_lrn = int(_tree.learn_count)
+                        _due_new = int(_tree.new_count)
                     except Exception:
-                        _new_due = 0
-                    if _new_due == 0:
+                        # Fallback: collection-wide raw SQL — deck-limit-unaware,
+                        # but far more useful than zeros if the scheduler call
+                        # itself is unavailable. Mirrors the same fallback shape
+                        # already used elsewhere for this exact trade-off.
+                        import time as _t
                         try:
-                            _new_due = int(mw.col.db.scalar(
-                                "SELECT count() FROM cards WHERE queue = 0") or 0)
+                            _today_ord = mw.col.sched.today
                         except Exception:
-                            _new_due = 0
-
-                    _due_today = _new_due + _lrn_due + _rev_due
-                except Exception:
-                    _due_today = 0
+                            from datetime import date as _date_fb
+                            _today_ord = (_date_fb.today() - _date_fb(2006, 1, 1)).days
+                        _now_ts = int(_t.time())
+                        # 1.0.42 FIX: same learn-ahead correction as days()
+                        # above and build_heatmap_html() — see that comment for
+                        # the full rationale. queue=3 is untouched.
+                        _collapse = int(mw.col.get_config("collapseTime", 1200) or 1200)
+                        _due_rev = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards WHERE queue = 2 AND due <= ?",
+                            _today_ord) or 0)
+                        _due_lrn = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards "
+                            "WHERE (queue = 1 AND due <= ?) "
+                            "   OR (queue = 3 AND due <= ?)",
+                            _now_ts + _collapse, _today_ord) or 0)
+                        _due_new = int(mw.col.db.scalar(
+                            "SELECT count() FROM cards WHERE queue = 0") or 0)
+            _due_today = _due_new + _due_lrn + _due_rev
             result.append(HeatmapDay(
                 day=current, minutes=mins, effective_minutes=eff,
                 quality=quality, sessions=len(items),
@@ -972,6 +1056,9 @@ class HeatmapService:
                 hard_count=rl.get("hard_count", 0),
                 easy_count=rl.get("easy_count", 0),
                 is_goal_reached=is_goal_reached,
+                new_due=_due_new,
+                lrn_due=_due_lrn,
+                rev_due=_due_rev,
                 cards_reviewed=rl.get("cards_reviewed", 0),
             ))
             current += _td(days=1)

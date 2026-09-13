@@ -851,17 +851,31 @@ class SettingsDialog(QDialog):
         self.hm_due_forecast_unlimited.toggled.connect(self.hm_due_forecast_days.setDisabled)
         self.hm_due_forecast_unlimited.toggled.connect(self._auto_save)
         hmf.addRow("Cell size",     self.hm_cell_size)
-        hmf.addRow("Cell shape",    self.hm_cell_shape)
-        hmf.addRow("Note marker",   _note_row)
-        hmf.addRow("", row_label_color)
-        hmf.addRow("Colour scheme", scheme_row)
-        hmf.addRow("Grouping",      self.hm_grouping)
-        hmf.addRow("Colour metric", self.hm_color_metric)
-        hmf.addRow("Default Statistics View", self.hm_default_view)
-        hmf.addRow("Forecast ahead", self.hm_due_forecast_days)
-        hmf.addRow("", self.hm_due_forecast_unlimited)
-        hmf.addRow("", self.hide_native_stats)
         t3l.addWidget(hmg)
+
+        # ── Heatmap Customization (advanced) ─────────────────────────────────
+        # Split out from the Appearance group above: everything here is
+        # detailed visual/presentation customization beyond Theme and Cell
+        # size, matching the tier system's own stated design ("Beginner:
+        # Just the essentials: Timer, Heatmap, Streak, Theme." / "Advanced:
+        # Adds Heatmap customization and detailed statistics." — see the
+        # _TIER_BLURBS definitions above). Widget construction, config keys,
+        # defaults, tooltips, and signal wiring are all unchanged from the
+        # Appearance group above — only which group's form layout each row
+        # is added to, and this group's tier registration, are new.
+        hmcg = QGroupBox("Heatmap Customization", t3); hmcf = QFormLayout(hmcg)
+        hmcf.addRow("Cell shape",    self.hm_cell_shape)
+        hmcf.addRow("Note marker",   _note_row)
+        hmcf.addRow("", row_label_color)
+        hmcf.addRow("Colour scheme", scheme_row)
+        hmcf.addRow("Grouping",      self.hm_grouping)
+        hmcf.addRow("Colour metric", self.hm_color_metric)
+        hmcf.addRow("Default Statistics View", self.hm_default_view)
+        hmcf.addRow("Forecast ahead", self.hm_due_forecast_days)
+        hmcf.addRow("", self.hm_due_forecast_unlimited)
+        hmcf.addRow("", self.hide_native_stats)
+        t3l.addWidget(hmcg)
+        self._tier_widgets["advanced"].append(hmcg)
 
         thg = QGroupBox("Workload thresholds", t3); thf = QFormLayout(thg)
         self.heavy_cards = QSpinBox(thg); self.heavy_cards.setRange(1,9999); self.heavy_cards.setSuffix(" cards")

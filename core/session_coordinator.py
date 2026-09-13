@@ -342,9 +342,20 @@ class SessionCoordinator:
             self.goal_reported = True   # set BEFORE the DB write (issue #7)
             try:
                 if self._heatmap_svc:
-                    self._heatmap_svc.repo.mark_goal_reached(
-                        _scheduler_today(_get_day_cutoff())
-                    )
+                    # 1.0.48: rollback is scoped specifically to the write
+                    # itself, not refresh_goal_days() (which already
+                    # swallows its own failures in _load_goal_dates() and
+                    # can't raise) — a genuine mark_goal_reached() failure
+                    # must not leave goal_reported permanently True with
+                    # nothing ever recorded; re-raising preserves the
+                    # existing log.error(...) below unchanged.
+                    try:
+                        self._heatmap_svc.repo.mark_goal_reached(
+                            _scheduler_today(_get_day_cutoff())
+                        )
+                    except Exception:
+                        self.goal_reported = False
+                        raise
                     self._heatmap_svc.refresh_goal_days()
             except Exception as exc:
                 log.error("goal persist failed: %s", exc)
@@ -358,7 +369,17 @@ class SessionCoordinator:
             try:
                 today_rate = self._heatmap_svc.today_again_rate()
                 week_avg   = self._heatmap_svc.week_avg_again_rate()
-                today      = date.today()
+                # 1.0.43 FIX: was date.today() (calendar day), which
+                # disagrees with scheduler_today() during the window
+                # between real midnight and the day's rollover hour
+                # (default 4am) -- _revlog_by_day() buckets by scheduler
+                # day, so a session finished in that window was looked up
+                # under the wrong (not-yet-started) day and silently read
+                # back 0 new/reviews/relearned, even though the session
+                # genuinely happened. today_again_rate()/week_avg_again_rate()
+                # above already use scheduler_today() internally and were
+                # never affected; only this local variable was wrong.
+                today      = _scheduler_today(_get_day_cutoff())
                 rl         = self._heatmap_svc._revlog_by_day(today, today)
                 day_data   = rl.get(today, {})
                 new_today       = day_data.get("new_cards",     0)
@@ -518,11 +539,13 @@ class SessionCoordinator:
         Falls back to the day-cutoff-aware SQL already proven in
         heatmap_service.py if sched.counts() is ever unavailable or
         (unexpectedly) empty — the same defensive pattern already used
-        there, kept here for consistency and as a safety net. Known minor
-        gap in that fallback only: it can under-count intraday learning
-        cards due within the next few minutes but not yet due by strict
-        timestamp comparison (sched.counts() has no such gap) — acceptable
-        for a fallback path that should rarely trigger.
+        there, kept here for consistency and as a safety net. As of 1.0.42,
+        that fallback's intraday-learning bound is widened by the
+        collection's own collapseTime (learn-ahead) window, matching what
+        sched.counts()/deck_due_tree() already do — previously it used a
+        bare `due <= now` comparison and could under-count intraday
+        learning cards due within the next few minutes but not yet due by
+        strict timestamp comparison.
         """
         from aqt import mw
         if not (mw and mw.col):
@@ -538,11 +561,12 @@ class SessionCoordinator:
             import time as _time
             today_ord = mw.col.sched.today
             now_ts = int(_time.time())
+            collapse = int(mw.col.get_config("collapseTime", 1200) or 1200)
             rev = mw.col.db.scalar(
                 "SELECT count() FROM cards WHERE queue = 2 AND due <= ?", today_ord) or 0
             lrn = mw.col.db.scalar(
                 "SELECT count() FROM cards WHERE (queue = 1 AND due <= ?) OR (queue = 3 AND due <= ?)",
-                now_ts, today_ord) or 0
+                now_ts + collapse, today_ord) or 0
             new = mw.col.db.scalar("SELECT count() FROM cards WHERE queue = 0") or 0
             return (int(new), int(lrn), int(rev), int(new) + int(lrn) + int(rev))
         except Exception as exc:
@@ -589,6 +613,14 @@ class SessionCoordinator:
         goal_reported = True, so this guard prevents a double-write when the
         user finishes the last card at the same time the Pomodoro timer fires.
         goal_reported = True is set BEFORE the DB write for the same reason.
+
+        1.0.48: if mark_goal_reached() itself genuinely raises, goal_reported
+        is rolled back to False so a later natural call (e.g. the next time
+        the user leaves the reviewer, or on_session_completed firing) can
+        retry — previously a failed write left goal_reported stuck True for
+        the rest of the day with nothing ever recorded. refresh_goal_days()
+        is not treated as part of this rollback decision: it already
+        swallows its own failures internally and cannot raise.
         """
         if self.goal_reported:
             return
@@ -609,9 +641,13 @@ class SessionCoordinator:
             if self._authoritative_queue_counts()[3] > 0:
                 return
             self.goal_reported = True   # set BEFORE the DB write
-            self._heatmap_svc.repo.mark_goal_reached(
-                _scheduler_today(_get_day_cutoff())
-            )
+            try:
+                self._heatmap_svc.repo.mark_goal_reached(
+                    _scheduler_today(_get_day_cutoff())
+                )
+            except Exception:
+                self.goal_reported = False
+                raise
             self._heatmap_svc.refresh_goal_days()
         except Exception as exc:
             log.error("all_due goal check failed: %s", exc)
@@ -887,6 +923,13 @@ class SessionCoordinator:
         # Done/Remaining display is specifically about that goal (see
         # _authoritative_queue_counts()).
         _due_breakdown: tuple[int, int, int] | None = None
+        # 1.0.45: whether _goal (if set) is total_cards_today-based (the
+        # Cards goal, event-based — see done_remaining's tooltip below) as
+        # opposed to the all-due goal's baseline/total-based `done`, which
+        # is not event-based. Only used to decide whether the bar-mode
+        # tooltip needs the same event-count clarification already applied
+        # to done_remaining in 1.0.44.
+        _goal_is_cards_based = False
 
         if ec.get("cards_enabled", False):
             target = int(ec.get("cards_target", 25))
@@ -894,6 +937,7 @@ class SessionCoordinator:
             parts.append(f"{rem} cards")
             _active_goal_count += 1
             _goal = (self.total_cards_today, target, rem)
+            _goal_is_cards_based = True
             if rem == 0 and not self.goal_reported:
                 goal_just_hit = True
         if ec.get("sessions_enabled", False):
@@ -953,7 +997,10 @@ class SessionCoordinator:
             pct = 0 if target <= 0 else round(100 * done / target)
             if _goal_mode == "bar":
                 self._toolbar.set_conditions([self._progress_bar(pct)])
-                self._toolbar.set_conditions_tooltip(f"Today's Goal — {pct}% complete.")
+                _tip = f"Today's Goal — {pct}% complete."
+                if _goal_is_cards_based:
+                    _tip += " Counts study events, so reviewing the same card twice counts twice."
+                self._toolbar.set_conditions_tooltip(_tip)
             elif _goal_mode == "done_remaining" and _due_breakdown is not None:
                 # "Done" = cards actually answered today (FocusFlow's own
                 # existing study-day counter — the same one the Cards goal
@@ -967,7 +1014,10 @@ class SessionCoordinator:
                 denom = done_today + remaining
                 pct2 = round(100 * done_today / denom) if denom > 0 else 0
                 self._toolbar.set_conditions([f"{done_today} / {denom} due"])
-                self._toolbar.set_conditions_tooltip(f"Today's Goal — {pct2}% complete.")
+                self._toolbar.set_conditions_tooltip(
+                    f"Today's Goal — {pct2}% complete. "
+                    "Counts study events, so reviewing the same card twice counts twice."
+                )
             else:
                 self._toolbar.set_conditions(parts)
                 self._toolbar.set_conditions_tooltip(None)
